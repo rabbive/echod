@@ -1,0 +1,7 @@
+CURSOR_CONTEXT.md
+__pycache__/
+.pytest_cache/
+.DS_Store
+results/
+.cursor/
+
