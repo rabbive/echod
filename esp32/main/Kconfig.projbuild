@@ -1,0 +1,52 @@
+menu "ECHO Leaf Configuration"
+
+    config ECHO_WIFI_SSID
+        string "WiFi SSID"
+        default "echo-network"
+        help
+            WiFi network name the leaf node connects to.
+
+    config ECHO_WIFI_PASSWORD
+        string "WiFi Password"
+        default "echo1234"
+        help
+            WiFi password.
+
+    config ECHO_MQTT_BROKER_URI
+        string "MQTT Broker URI"
+        default "mqtt://192.168.1.1:1883"
+        help
+            URI of the MQTT broker running on the coordinator RPi.
+
+    config ECHO_CLUSTER_ID
+        string "Cluster ID"
+        default "echo-default"
+        help
+            Logical cluster name — must match the coordinator cluster.
+
+    config ECHO_NODE_ID
+        string "Node ID"
+        default "leaf-0"
+        help
+            Unique identifier for this leaf node.
+
+    config ECHO_SENSOR_INTERVAL_MS
+        int "Sensor polling interval (ms)"
+        default 1000
+        help
+            Milliseconds between sensor readings.
+
+    config ECHO_DELTA_THRESHOLD
+        int "Delta threshold (x100)"
+        default 5
+        help
+            Percentage deviation (multiplied by 100) that triggers a
+            report.  5 means 0.05 (5 %).
+
+    config ECHO_DHT_GPIO
+        int "DHT22 data GPIO pin"
+        default 4
+        help
+            GPIO pin connected to the DHT22 DATA line.
+
+endmenu

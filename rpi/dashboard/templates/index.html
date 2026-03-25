@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ECHO Protocol — Cluster Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; }
+    .battery-bar { transition: width 0.5s ease; }
+    .state-badge { @apply px-2 py-0.5 rounded-full text-xs font-bold uppercase tracking-wide; }
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen">
+
+  <!-- ====================== HEADER ====================== -->
+  <header class="bg-gray-900 border-b border-gray-800 px-6 py-4">
+    <div class="max-w-7xl mx-auto flex items-center justify-between">
+      <div>
+        <h1 class="text-2xl font-bold tracking-tight">
+          <span class="text-emerald-400">ECHO</span> Protocol Dashboard
+        </h1>
+        <p class="text-sm text-gray-400 mt-0.5">Energy-aware Clustered Hierarchical cOnsensus</p>
+      </div>
+      <div id="cluster-stats" class="flex gap-6 text-sm">
+        <div>
+          <span class="text-gray-500">Leader</span>
+          <span id="stat-leader" class="ml-1 font-mono text-emerald-400">—</span>
+        </div>
+        <div>
+          <span class="text-gray-500">Term</span>
+          <span id="stat-term" class="ml-1 font-mono text-sky-400">0</span>
+        </div>
+        <div>
+          <span class="text-gray-500">Nodes</span>
+          <span id="stat-nodes" class="ml-1 font-mono text-amber-400">0</span>
+        </div>
+        <div>
+          <span class="text-gray-500">Leaves</span>
+          <span id="stat-leaves" class="ml-1 font-mono text-purple-400">0</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-6 py-6 space-y-6">
+
+    <!-- =================== NODE CARDS =================== -->
+    <section>
+      <h2 class="text-lg font-semibold mb-3 text-gray-300">Coordinator Nodes</h2>
+      <div id="node-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
+        <!-- cards injected by JS -->
+      </div>
+    </section>
+
+    <!-- =================== CHARTS =================== -->
+    <section class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div class="bg-gray-900 rounded-xl p-5 border border-gray-800">
+        <h3 class="text-sm font-semibold text-gray-400 mb-3">Message Traffic (last 60 s)</h3>
+        <canvas id="traffic-chart" height="180"></canvas>
+      </div>
+      <div class="bg-gray-900 rounded-xl p-5 border border-gray-800">
+        <h3 class="text-sm font-semibold text-gray-400 mb-3">Battery Levels</h3>
+        <canvas id="battery-chart" height="180"></canvas>
+      </div>
+    </section>
+
+    <!-- =================== LOG TABLE =================== -->
+    <section class="bg-gray-900 rounded-xl p-5 border border-gray-800">
+      <h3 class="text-sm font-semibold text-gray-400 mb-3">Recent Broadcast Messages</h3>
+      <div class="overflow-x-auto max-h-64 overflow-y-auto">
+        <table class="w-full text-xs text-left">
+          <thead class="text-gray-500 uppercase border-b border-gray-800 sticky top-0 bg-gray-900">
+            <tr>
+              <th class="py-2 pr-4">Time</th>
+              <th class="py-2 pr-4">Sender</th>
+              <th class="py-2 pr-4">Type</th>
+              <th class="py-2">Payload</th>
+            </tr>
+          </thead>
+          <tbody id="msg-tbody" class="font-mono text-gray-300"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    // =====================================================
+    // State
+    // =====================================================
+    const nodes = {};
+    const msgLog = [];
+    const trafficData = [];
+    const TRAFFIC_WINDOW = 60;
+
+    // =====================================================
+    // Socket.IO
+    // =====================================================
+    const socket = io();
+
+    socket.on('node_update', (data) => {
+      nodes[data.node_id] = data;
+      renderNodes();
+      updateClusterStats();
+    });
+
+    socket.on('broadcast_msg', (data) => {
+      msgLog.unshift(data);
+      if (msgLog.length > 200) msgLog.length = 200;
+      renderMessages();
+      bumpTraffic();
+    });
+
+    // =====================================================
+    // Node cards
+    // =====================================================
+    const STATE_COLORS = {
+      leader:       'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
+      follower:     'bg-sky-500/20 text-sky-400 border-sky-500/30',
+      candidate:    'bg-amber-500/20 text-amber-400 border-amber-500/30',
+      observer:     'bg-red-500/20 text-red-400 border-red-500/30',
+      local_leader: 'bg-violet-500/20 text-violet-400 border-violet-500/30',
+    };
+
+    function batteryColor(pct) {
+      if (pct > 50) return 'bg-emerald-500';
+      if (pct > 25) return 'bg-amber-500';
+      return 'bg-red-500';
+    }
+
+    function renderNodes() {
+      const grid = document.getElementById('node-grid');
+      grid.innerHTML = '';
+      const sorted = Object.values(nodes).sort((a, b) => a.node_id.localeCompare(b.node_id));
+      for (const n of sorted) {
+        const stateClass = STATE_COLORS[n.state] || STATE_COLORS.follower;
+        const bat = n.battery ?? 0;
+        grid.innerHTML += `
+          <div class="bg-gray-900 rounded-xl p-4 border border-gray-800 space-y-3">
+            <div class="flex items-center justify-between">
+              <span class="font-mono font-bold text-sm">${n.node_id}</span>
+              <span class="state-badge border ${stateClass}">${n.state}</span>
+            </div>
+            <div>
+              <div class="flex justify-between text-xs text-gray-500 mb-1">
+                <span>Battery</span><span>${bat}%</span>
+              </div>
+              <div class="w-full bg-gray-800 rounded-full h-2">
+                <div class="battery-bar ${batteryColor(bat)} h-2 rounded-full" style="width:${bat}%"></div>
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-2 text-xs">
+              <div><span class="text-gray-500">Term</span> <span class="ml-1 font-mono">${n.term ?? 0}</span></div>
+              <div><span class="text-gray-500">Log</span> <span class="ml-1 font-mono">${n.log_length ?? 0}</span></div>
+              <div><span class="text-gray-500">Commit</span> <span class="ml-1 font-mono">${n.commit_index ?? 0}</span></div>
+              <div><span class="text-gray-500">Msgs</span> <span class="ml-1 font-mono">${(n.messages_sent ?? 0) + (n.messages_received ?? 0)}</span></div>
+            </div>
+          </div>`;
+      }
+    }
+
+    function updateClusterStats() {
+      const all = Object.values(nodes);
+      const leader = all.find(n => n.state === 'leader');
+      document.getElementById('stat-leader').textContent = leader ? leader.node_id : '—';
+      document.getElementById('stat-term').textContent = leader ? leader.term : (all.length ? Math.max(...all.map(n => n.term || 0)) : 0);
+      document.getElementById('stat-nodes').textContent = all.length;
+      const leafCount = all.reduce((s, n) => s + (n.leaves ? n.leaves.length : 0), 0);
+      document.getElementById('stat-leaves').textContent = leafCount;
+    }
+
+    // =====================================================
+    // Message log table
+    // =====================================================
+    function renderMessages() {
+      const tbody = document.getElementById('msg-tbody');
+      tbody.innerHTML = '';
+      for (const m of msgLog.slice(0, 50)) {
+        const t = new Date(m.timestamp * 1000).toLocaleTimeString();
+        const payloadStr = JSON.stringify(m.payload || {}).slice(0, 80);
+        tbody.innerHTML += `<tr class="border-b border-gray-800/50">
+          <td class="py-1 pr-4 text-gray-500">${t}</td>
+          <td class="py-1 pr-4">${m.sender_id || '?'}</td>
+          <td class="py-1 pr-4 text-sky-400">${m.msg_type || '?'}</td>
+          <td class="py-1 text-gray-400 truncate max-w-xs">${payloadStr}</td>
+        </tr>`;
+      }
+    }
+
+    // =====================================================
+    // Traffic chart
+    // =====================================================
+    const trafficCtx = document.getElementById('traffic-chart').getContext('2d');
+    const trafficChart = new Chart(trafficCtx, {
+      type: 'line',
+      data: {
+        labels: Array(TRAFFIC_WINDOW).fill(''),
+        datasets: [{
+          label: 'Messages / sec',
+          data: Array(TRAFFIC_WINDOW).fill(0),
+          borderColor: '#34d399',
+          backgroundColor: 'rgba(52,211,153,0.1)',
+          fill: true, tension: 0.3, pointRadius: 0,
+        }],
+      },
+      options: {
+        responsive: true,
+        scales: {
+          x: { display: false },
+          y: { beginAtZero: true, grid: { color: '#1f2937' }, ticks: { color: '#6b7280' } },
+        },
+        plugins: { legend: { display: false } },
+        animation: { duration: 300 },
+      },
+    });
+
+    let trafficCount = 0;
+    function bumpTraffic() { trafficCount++; }
+    setInterval(() => {
+      trafficChart.data.datasets[0].data.push(trafficCount);
+      trafficChart.data.datasets[0].data.shift();
+      trafficChart.update('none');
+      trafficCount = 0;
+    }, 1000);
+
+    // =====================================================
+    // Battery chart
+    // =====================================================
+    const batteryCtx = document.getElementById('battery-chart').getContext('2d');
+    const batteryChart = new Chart(batteryCtx, {
+      type: 'bar',
+      data: { labels: [], datasets: [{ label: 'Battery %', data: [], backgroundColor: [] }] },
+      options: {
+        responsive: true,
+        indexAxis: 'y',
+        scales: {
+          x: { min: 0, max: 100, grid: { color: '#1f2937' }, ticks: { color: '#6b7280' } },
+          y: { grid: { display: false }, ticks: { color: '#d1d5db', font: { family: 'monospace' } } },
+        },
+        plugins: { legend: { display: false } },
+        animation: { duration: 300 },
+      },
+    });
+
+    setInterval(() => {
+      const sorted = Object.values(nodes).sort((a, b) => a.node_id.localeCompare(b.node_id));
+      batteryChart.data.labels = sorted.map(n => n.node_id);
+      batteryChart.data.datasets[0].data = sorted.map(n => n.battery ?? 0);
+      batteryChart.data.datasets[0].backgroundColor = sorted.map(n => {
+        const b = n.battery ?? 0;
+        if (b > 50) return '#34d399';
+        if (b > 25) return '#fbbf24';
+        return '#ef4444';
+      });
+      batteryChart.update('none');
+    }, 2000);
+
+    // =====================================================
+    // Initial fetch
+    // =====================================================
+    fetch('/api/nodes').then(r => r.json()).then(list => {
+      for (const n of list) nodes[n.node_id] = n;
+      renderNodes();
+      updateClusterStats();
+    });
+  </script>
+</body>
+</html>
