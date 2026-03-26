@@ -10,7 +10,19 @@
   <style>
     body { font-family: 'Inter', system-ui, sans-serif; }
     .battery-bar { transition: width 0.5s ease; }
-    .state-badge { @apply px-2 py-0.5 rounded-full text-xs font-bold uppercase tracking-wide; }
+    /* Tailwind is loaded via CDN, but inline `@apply` requires a build step.
+       Use plain CSS here to avoid browser console errors. */
+    .state-badge {
+      padding-left: 0.5rem;
+      padding-right: 0.5rem;
+      padding-top: 0.125rem;
+      padding-bottom: 0.125rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
   </style>
 </head>
 <body class="bg-gray-950 text-gray-100 min-h-screen">

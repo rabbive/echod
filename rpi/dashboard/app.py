@@ -57,14 +57,27 @@ def _setup_mqtt(broker_host: str, broker_port: int, cluster_id: str) -> mqtt.Cli
     client = mqtt.Client(client_id="echo-dashboard", **_CLIENT_KWARGS)
 
     def on_connect(_client: mqtt.Client, _ud: object, *args: object) -> None:
-        rc = args[-1] if args else 0
-        rc_val = getattr(rc, "value", rc)
+        # paho-mqtt v2 callback signature may include:
+        #   (client, userdata, flags, reason_code, properties)
+        # Choose the reason_code from args (not the trailing properties).
+        reason_code: object = 0
+        for a in args:
+            if isinstance(a, int):
+                reason_code = a
+                break
+            if hasattr(a, "value"):
+                reason_code = a
+                break
+
+        rc_val = getattr(reason_code, "value", reason_code)
         if rc_val == 0:
             _client.subscribe(f"echo/{cluster_id}/status/+")
             _client.subscribe(f"echo/{cluster_id}/broadcast")
             logger.info("Dashboard connected to MQTT broker")
         else:
-            logger.error("Dashboard MQTT connect failed (rc=%s)", rc)
+            logger.error(
+                "Dashboard MQTT connect failed (reason_code=%s)", reason_code
+            )
 
     def on_message(_client: mqtt.Client, _ud: object, msg: mqtt.MQTTMessage) -> None:
         try:

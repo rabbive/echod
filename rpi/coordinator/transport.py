@@ -84,8 +84,21 @@ class MQTTTransport:
         self._client.disconnect()
 
     def _on_connect(self, _client: Any, _userdata: Any, *args: Any) -> None:
-        rc = args[-1] if args else 0
-        rc_val = getattr(rc, "value", rc)  # v2 returns ReasonCode
+        # paho-mqtt v2 callback signature can include:
+        #   (client, userdata, flags, reason_code, properties)
+        # Depending on MQTT version, the reason code may be an int or an
+        # object with a `value` attribute. We search the args to pick the
+        # correct one (not the trailing properties object).
+        reason_code: Any = 0
+        for a in args:
+            if isinstance(a, int):
+                reason_code = a
+                break
+            if hasattr(a, "value"):
+                reason_code = a
+                break
+
+        rc_val = getattr(reason_code, "value", reason_code)
         if rc_val == 0:
             self._connected = True
             self._client.subscribe(self._rpc_topic)
@@ -93,14 +106,28 @@ class MQTTTransport:
             logger.info("%s connected to MQTT broker at %s:%s",
                         self.node_id, self._broker_host, self._broker_port)
         else:
-            logger.error("%s MQTT connect failed (rc=%s)", self.node_id, rc)
+            logger.error(
+                "%s MQTT connect failed (reason_code=%s)", self.node_id, reason_code
+            )
 
     def _on_disconnect(self, _client: Any, _userdata: Any, *args: Any) -> None:
         self._connected = False
-        rc = args[-1] if args else 0
-        rc_val = getattr(rc, "value", rc)
+        reason_code: Any = 0
+        for a in args:
+            if isinstance(a, int):
+                reason_code = a
+                break
+            if hasattr(a, "value"):
+                reason_code = a
+                break
+
+        rc_val = getattr(reason_code, "value", reason_code)
         if rc_val != 0:
-            logger.warning("%s unexpected MQTT disconnect (rc=%s)", self.node_id, rc)
+            logger.warning(
+                "%s unexpected MQTT disconnect (reason_code=%s)",
+                self.node_id,
+                reason_code,
+            )
 
     # ------------------------------------------------------------- messaging
 

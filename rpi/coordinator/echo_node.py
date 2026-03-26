@@ -97,7 +97,10 @@ class EchoCoordinator:
         battery: BatteryMonitor,
     ) -> None:
         self.node_id = node_id
-        self.peers = peers
+        # Peers must exclude ourselves; otherwise quorum math and replication
+        # fanout are incorrect in multi-coordinator deployments (including the
+        # local hardware-free demo which passes a full peer list).
+        self.peers = [p for p in peers if p != node_id]
         self.transport = transport
         self.battery = battery
 
