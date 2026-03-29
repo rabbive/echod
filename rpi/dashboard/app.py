@@ -18,7 +18,7 @@ import time
 from threading import Lock
 
 import paho.mqtt.client as mqtt
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO
 
 from rpi.config import (
@@ -42,6 +42,14 @@ _lock = Lock()
 
 MAX_MESSAGE_LOG = 500
 
+# Set in main() before handling requests
+_mqtt_client: mqtt.Client | None = None
+_cluster_id: str = CLUSTER_ID
+DEMO_SENDER_ID = "echo-dashboard"
+_mqtt_connected: bool = False
+_mqtt_last_rx: float | None = None
+_broker_endpoint: tuple[str, int] = (BROKER_HOST, BROKER_PORT)
+
 
 # ---------------------------------------------------------------- MQTT setup
 
@@ -52,6 +60,20 @@ _CLIENT_KWARGS: dict = (
     else {}
 )
 
+def _reason_code_value(reason_code: object) -> int | None:
+    if isinstance(reason_code, int):
+        return reason_code
+    if hasattr(reason_code, "value"):
+        try:
+            return int(getattr(reason_code, "value"))
+        except Exception:
+            return None
+    if isinstance(reason_code, (list, tuple)):
+        if not reason_code:
+            return None
+        return _reason_code_value(reason_code[0])
+    return None
+
 
 def _setup_mqtt(broker_host: str, broker_port: int, cluster_id: str) -> mqtt.Client:
     client = mqtt.Client(client_id="echo-dashboard", **_CLIENT_KWARGS)
@@ -60,27 +82,36 @@ def _setup_mqtt(broker_host: str, broker_port: int, cluster_id: str) -> mqtt.Cli
         # paho-mqtt v2 callback signature may include:
         #   (client, userdata, flags, reason_code, properties)
         # Choose the reason_code from args (not the trailing properties).
-        reason_code: object = 0
+        reason_code: object | None = None
         for a in args:
-            if isinstance(a, int):
-                reason_code = a
-                break
-            if hasattr(a, "value"):
+            if isinstance(a, dict):
+                continue  # flags
+            if isinstance(a, (int, list, tuple)) or hasattr(a, "value"):
                 reason_code = a
                 break
 
-        rc_val = getattr(reason_code, "value", reason_code)
+        rc_val = _reason_code_value(reason_code)
+        global _mqtt_connected
         if rc_val == 0:
+            _mqtt_connected = True
             _client.subscribe(f"echo/{cluster_id}/status/+")
             _client.subscribe(f"echo/{cluster_id}/broadcast")
             logger.info("Dashboard connected to MQTT broker")
         else:
+            _mqtt_connected = False
             logger.error(
                 "Dashboard MQTT connect failed (reason_code=%s)", reason_code
             )
 
+    def on_disconnect(_client: mqtt.Client, _ud: object, *args: object) -> None:
+        global _mqtt_connected
+        _mqtt_connected = False
+        logger.warning("Dashboard disconnected from MQTT broker")
+
     def on_message(_client: mqtt.Client, _ud: object, msg: mqtt.MQTTMessage) -> None:
+        global _mqtt_last_rx
         try:
+            _mqtt_last_rx = time.time()
             data = json.loads(msg.payload.decode())
             if "/status/" in msg.topic:
                 node_id = data.get("node_id", "unknown")
@@ -97,10 +128,32 @@ def _setup_mqtt(broker_host: str, broker_port: int, cluster_id: str) -> mqtt.Cli
             logger.exception("Failed to process MQTT message")
 
     client.on_connect = on_connect
+    client.on_disconnect = on_disconnect
     client.on_message = on_message
     client.connect(broker_host, broker_port)
     client.loop_start()
     return client
+
+
+def _publish_broadcast(msg_type: str, payload: dict) -> None:
+    if _mqtt_client is None:
+        raise RuntimeError("MQTT client not initialised")
+    topic = f"echo/{_cluster_id}/broadcast"
+    envelope = {
+        "sender_id": DEMO_SENDER_ID,
+        "recipient_id": "*",
+        "msg_type": msg_type,
+        "payload": payload,
+        "timestamp": time.time(),
+    }
+    _mqtt_client.publish(topic, json.dumps(envelope))
+
+
+def _publish_demo_leaves(paused: bool) -> None:
+    if _mqtt_client is None:
+        raise RuntimeError("MQTT client not initialised")
+    topic = f"echo/{_cluster_id}/demo/leaves"
+    _mqtt_client.publish(topic, json.dumps({"paused": paused}))
 
 
 # -------------------------------------------------------------- Flask routes
@@ -122,6 +175,78 @@ def api_messages():
         return jsonify(_message_log[-100:])
 
 
+@app.route("/api/dashboard-status")
+def api_dashboard_status():
+    """MQTT connection hint for the UI (broker is source of truth for live data)."""
+    now = time.time()
+    age: float | None = None
+    if _mqtt_last_rx is not None:
+        age = now - _mqtt_last_rx
+    client_ok = _mqtt_client.is_connected() if _mqtt_client is not None else False
+    return jsonify(
+        {
+            "mqtt_connected": client_ok and _mqtt_connected,
+            "seconds_since_last_mqtt_message": age,
+            "broker": f"{_broker_endpoint[0]}:{_broker_endpoint[1]}",
+        }
+    )
+
+
+@app.post("/api/demo/battery")
+def api_demo_battery():
+    if _mqtt_client is None:
+        return jsonify({"ok": False, "error": "MQTT unavailable"}), 503
+    data = request.get_json(silent=True) or {}
+    try:
+        level = float(data.get("level", 100))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "invalid level"}), 400
+    level = max(0.0, min(100.0, level))
+    _publish_broadcast("demo_control", {"action": "set_battery", "level": level})
+    return jsonify({"ok": True})
+
+
+@app.post("/api/demo/drain-rate")
+def api_demo_drain_rate():
+    if _mqtt_client is None:
+        return jsonify({"ok": False, "error": "MQTT unavailable"}), 503
+    data = request.get_json(silent=True) or {}
+    try:
+        rate = float(data.get("rate", 0.5))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "invalid rate"}), 400
+    if rate < 0:
+        return jsonify({"ok": False, "error": "rate must be non-negative"}), 400
+    _publish_broadcast("demo_control", {"action": "set_drain_rate", "rate": rate})
+    return jsonify({"ok": True})
+
+
+@app.post("/api/demo/drain-paused")
+def api_demo_drain_paused():
+    if _mqtt_client is None:
+        return jsonify({"ok": False, "error": "MQTT unavailable"}), 503
+    data = request.get_json(silent=True) or {}
+    paused = bool(data.get("paused", False))
+    _publish_broadcast("demo_control", {"action": "set_drain_paused", "paused": paused})
+    return jsonify({"ok": True})
+
+
+@app.post("/api/demo/leaves/pause")
+def api_demo_leaves_pause():
+    if _mqtt_client is None:
+        return jsonify({"ok": False, "error": "MQTT unavailable"}), 503
+    _publish_demo_leaves(True)
+    return jsonify({"ok": True})
+
+
+@app.post("/api/demo/leaves/resume")
+def api_demo_leaves_resume():
+    if _mqtt_client is None:
+        return jsonify({"ok": False, "error": "MQTT unavailable"}), 503
+    _publish_demo_leaves(False)
+    return jsonify({"ok": True})
+
+
 # -------------------------------------------------------------------- main
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -140,7 +265,10 @@ def main() -> None:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
     args = parse_args()
-    _setup_mqtt(args.broker, args.port, args.cluster)
+    global _mqtt_client, _cluster_id, _broker_endpoint
+    _cluster_id = args.cluster
+    _broker_endpoint = (args.broker, args.port)
+    _mqtt_client = _setup_mqtt(args.broker, args.port, args.cluster)
     logger.info("Dashboard starting on http://%s:%d", args.host, args.dash_port)
     socketio.run(
         app,

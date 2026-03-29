@@ -53,11 +53,89 @@
           <span class="text-gray-500">Leaves</span>
           <span id="stat-leaves" class="ml-1 font-mono text-purple-400">0</span>
         </div>
+        <div>
+          <span class="text-gray-500">Max commit</span>
+          <span id="stat-max-commit" class="ml-1 font-mono text-rose-400">0</span>
+        </div>
+      </div>
+    </div>
+    <div class="border-t border-gray-800/80 px-6 py-2">
+      <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3 text-xs">
+        <span id="dash-url" class="font-mono text-gray-500 truncate max-w-[60vw]"></span>
+        <div class="flex flex-wrap gap-4 text-gray-400">
+          <span>Socket.IO: <strong id="sock-status" class="text-amber-500">…</strong></span>
+          <span>MQTT: <strong id="mqtt-status" class="text-gray-500">…</strong></span>
+        </div>
       </div>
     </div>
   </header>
 
+  <div class="max-w-7xl mx-auto px-6 pt-4">
+    <details class="group bg-gray-900/50 rounded-lg border border-gray-800 open:border-gray-700">
+      <summary class="cursor-pointer list-none px-4 py-2 text-sm text-gray-400 hover:text-gray-200">
+        What am I seeing? — glossary (click to expand)
+      </summary>
+      <div class="px-4 pb-3 pt-0 text-xs text-gray-500 space-y-2 border-t border-gray-800/80">
+        <p><strong class="text-gray-400">Leader</strong> — coordinator that accepts replicated writes for this term; only one should be <code class="text-gray-600">leader</code> at a time in a healthy cluster.</p>
+        <p><strong class="text-gray-400">Term</strong> — monotonic election generation; goes up when a new election wins.</p>
+        <p><strong class="text-gray-400">Max commit</strong> — highest commit index across nodes (replicated log applied).</p>
+        <p><strong class="text-gray-400">Leaves</strong> — registered mock sensors; traffic shows up as replicated log entries.</p>
+        <p><strong class="text-gray-400">Charts / broadcast table</strong> — live MQTT traffic. If nothing moves, check Socket.IO and MQTT indicators above (macOS often uses port <code class="text-gray-600">5001</code> if <code class="text-gray-600">5000</code> is taken by AirPlay).</p>
+      </div>
+    </details>
+  </div>
+
   <main class="max-w-7xl mx-auto px-6 py-6 space-y-6">
+
+    <!-- =================== DEMO CONTROLS =================== -->
+    <section class="bg-gray-900 rounded-xl p-5 border border-amber-900/40">
+      <h2 class="text-lg font-semibold mb-1 text-amber-200/90">Demo controls</h2>
+      <p class="text-xs text-gray-500 mb-4">
+        Mock coordinators only: sets battery / drain via MQTT broadcast. Pause/resume stops mock leaf sensor traffic (requires <code class="text-gray-400">mock_leaf</code> running).
+      </p>
+      <ol class="text-xs text-gray-500 mb-4 list-decimal list-inside space-y-1 border-l border-amber-900/30 pl-3">
+        <li>Confirm a <strong class="text-gray-400">Leader</strong> appears in the header.</li>
+        <li>Optional: <strong class="text-gray-400">Pause leaves</strong> to quiet the broadcast table.</li>
+        <li>Set battery to <strong class="text-gray-400">10%</strong> to show <code class="text-gray-600">observer</code> (energy gating).</li>
+        <li>Use <strong class="text-gray-400">25%</strong> to show recovery toward follower.</li>
+        <li><strong class="text-gray-400">Resume leaves</strong> to show commits again.</li>
+      </ol>
+      <div class="flex flex-wrap gap-2 mb-4">
+        <button type="button" id="demo-story-stress" class="px-3 py-1.5 rounded-lg bg-rose-900/40 border border-rose-800 hover:border-rose-600 text-xs">Story: Energy stress (12%)</button>
+        <button type="button" id="demo-story-recovery" class="px-3 py-1.5 rounded-lg bg-emerald-900/40 border border-emerald-800 hover:border-emerald-600 text-xs">Story: Recovery (40%)</button>
+      </div>
+      <div class="flex flex-wrap items-end gap-4 text-sm">
+        <div>
+          <label class="block text-gray-500 text-xs mb-1">Mock battery %</label>
+          <div class="flex items-center gap-2">
+            <input type="range" id="demo-battery" min="0" max="100" value="50" class="w-40 accent-emerald-500" />
+            <span id="demo-battery-val" class="font-mono text-gray-300 w-8">50</span>
+            <button type="button" id="demo-apply-battery" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium">Apply</button>
+          </div>
+        </div>
+        <div class="flex gap-2">
+          <button type="button" data-battery="10" class="demo-preset px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 hover:border-amber-600 text-xs">10% (observer)</button>
+          <button type="button" data-battery="25" class="demo-preset px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 hover:border-amber-600 text-xs">25% (restore)</button>
+          <button type="button" data-battery="100" class="demo-preset px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 hover:border-amber-600 text-xs">100%</button>
+        </div>
+        <div>
+          <label class="block text-gray-500 text-xs mb-1">Drain %/s</label>
+          <div class="flex items-center gap-2">
+            <input type="number" id="demo-drain-rate" min="0" step="0.1" value="0.5" class="w-20 bg-gray-800 border border-gray-700 rounded px-2 py-1 font-mono text-xs" />
+            <button type="button" id="demo-apply-drain" class="px-3 py-1.5 rounded-lg bg-sky-700 hover:bg-sky-600 text-white text-xs font-medium">Apply</button>
+          </div>
+        </div>
+        <div class="flex gap-2">
+          <button type="button" id="demo-drain-pause" class="px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 hover:border-amber-600 text-xs">Pause drain</button>
+          <button type="button" id="demo-drain-resume" class="px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 hover:border-amber-600 text-xs">Resume drain</button>
+        </div>
+        <div class="flex gap-2 border-l border-gray-800 pl-4">
+          <button type="button" id="demo-leaves-pause" class="px-3 py-1.5 rounded-lg bg-violet-900/50 border border-violet-700 hover:bg-violet-800/50 text-xs">Pause leaves</button>
+          <button type="button" id="demo-leaves-resume" class="px-3 py-1.5 rounded-lg bg-violet-900/50 border border-violet-700 hover:bg-violet-800/50 text-xs">Resume leaves</button>
+        </div>
+      </div>
+      <p id="demo-status" class="mt-3 text-xs font-mono text-gray-500 min-h-[1rem]"></p>
+    </section>
 
     <!-- =================== NODE CARDS =================== -->
     <section>
@@ -79,9 +157,27 @@
       </div>
     </section>
 
+    <!-- =================== EVENT TIMELINE =================== -->
+    <section class="bg-gray-900 rounded-xl p-5 border border-gray-800">
+      <h3 class="text-sm font-semibold text-gray-400 mb-3">Recent cluster events</h3>
+      <p class="text-xs text-gray-600 mb-2">Leader changes, role transitions, and commit milestones (derived from live status).</p>
+      <ul id="event-timeline" class="text-xs font-mono text-gray-400 max-h-40 overflow-y-auto space-y-1"></ul>
+    </section>
+
     <!-- =================== LOG TABLE =================== -->
     <section class="bg-gray-900 rounded-xl p-5 border border-gray-800">
-      <h3 class="text-sm font-semibold text-gray-400 mb-3">Recent Broadcast Messages</h3>
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <h3 class="text-sm font-semibold text-gray-400">Recent Broadcast Messages</h3>
+        <label class="text-xs text-gray-500 flex items-center gap-2">
+          Filter
+          <select id="msg-filter" class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-gray-300 text-xs">
+            <option value="all">All types</option>
+            <option value="liveness">liveness_ping</option>
+            <option value="demo">demo_control</option>
+            <option value="other">Other</option>
+          </select>
+        </label>
+      </div>
       <div class="overflow-x-auto max-h-64 overflow-y-auto">
         <table class="w-full text-xs text-left">
           <thead class="text-gray-500 uppercase border-b border-gray-800 sticky top-0 bg-gray-900">
@@ -106,14 +202,135 @@
     const msgLog = [];
     const trafficData = [];
     const TRAFFIC_WINDOW = 60;
+    const eventTimeline = [];
+    let prevLeaderId = null;
+    let prevStates = {};
+    let prevMaxCommit = 0;
+    let msgFilter = 'all';
+
+    document.getElementById('dash-url').textContent = window.location.href;
+
+    function pushTimeline(text) {
+      const t = new Date().toLocaleTimeString();
+      eventTimeline.unshift({ t, text });
+      if (eventTimeline.length > 40) eventTimeline.length = 40;
+      const ul = document.getElementById('event-timeline');
+      ul.innerHTML = eventTimeline.map((e) =>
+        `<li class="border-b border-gray-800/40 py-0.5"><span class="text-gray-600">${e.t}</span> — ${e.text}</li>`
+      ).join('');
+    }
+
+    function msgTypeBucket(m) {
+      const ty = m.msg_type || '';
+      if (ty === 'liveness_ping') return 'liveness';
+      if (ty === 'demo_control') return 'demo';
+      return 'other';
+    }
 
     // =====================================================
     // Socket.IO
     // =====================================================
     const socket = io();
+    const demoStatus = document.getElementById('demo-status');
+    const sockEl = document.getElementById('sock-status');
+    const mqttEl = document.getElementById('mqtt-status');
+
+    socket.on('connect', () => {
+      sockEl.textContent = 'connected';
+      sockEl.className = 'text-emerald-400';
+    });
+    socket.on('disconnect', () => {
+      sockEl.textContent = 'disconnected';
+      sockEl.className = 'text-red-400';
+    });
+
+    async function pollMqttStatus() {
+      try {
+        const r = await fetch('/api/dashboard-status');
+        const j = await r.json();
+        const ok = j.mqtt_connected;
+        mqttEl.textContent = ok
+          ? (j.seconds_since_last_mqtt_message != null
+              ? `ok (${j.broker}, last msg ${j.seconds_since_last_mqtt_message.toFixed(1)}s ago)`
+              : `ok (${j.broker}, waiting for data)`)
+          : 'disconnected';
+        mqttEl.className = ok ? 'text-emerald-400' : 'text-red-400';
+      } catch (e) {
+        mqttEl.textContent = 'unknown';
+        mqttEl.className = 'text-amber-500';
+      }
+    }
+    pollMqttStatus();
+    setInterval(pollMqttStatus, 2000);
+
+    document.getElementById('msg-filter').addEventListener('change', (ev) => {
+      msgFilter = ev.target.value;
+      renderMessages();
+    });
+
+    async function demoPost(url, body) {
+      try {
+        const r = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body ?? {}),
+        });
+        const j = await r.json();
+        if (j.ok) {
+          demoStatus.textContent = 'OK ' + url;
+          demoStatus.classList.remove('text-red-400');
+          demoStatus.classList.add('text-emerald-500/80');
+        } else {
+          demoStatus.textContent = (j.error || 'Error') + ' — ' + url;
+          demoStatus.classList.add('text-red-400');
+        }
+      } catch (e) {
+        demoStatus.textContent = String(e);
+        demoStatus.classList.add('text-red-400');
+      }
+    }
+
+    const batSlider = document.getElementById('demo-battery');
+    const batVal = document.getElementById('demo-battery-val');
+    batSlider.addEventListener('input', () => { batVal.textContent = batSlider.value; });
+    document.getElementById('demo-apply-battery').addEventListener('click', () => {
+      demoPost('/api/demo/battery', { level: parseFloat(batSlider.value) });
+    });
+    document.querySelectorAll('.demo-preset').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const v = btn.getAttribute('data-battery');
+        batSlider.value = v;
+        batVal.textContent = v;
+        demoPost('/api/demo/battery', { level: parseFloat(v) });
+      });
+    });
+    document.getElementById('demo-apply-drain').addEventListener('click', () => {
+      const rate = parseFloat(document.getElementById('demo-drain-rate').value);
+      demoPost('/api/demo/drain-rate', { rate });
+    });
+    document.getElementById('demo-drain-pause').addEventListener('click', () => demoPost('/api/demo/drain-paused', { paused: true }));
+    document.getElementById('demo-drain-resume').addEventListener('click', () => demoPost('/api/demo/drain-paused', { paused: false }));
+    document.getElementById('demo-leaves-pause').addEventListener('click', () => demoPost('/api/demo/leaves/pause', {}));
+    document.getElementById('demo-leaves-resume').addEventListener('click', () => demoPost('/api/demo/leaves/resume', {}));
+
+    document.getElementById('demo-story-stress').addEventListener('click', () => {
+      demoPost('/api/demo/battery', { level: 12 });
+      batSlider.value = 12;
+      batVal.textContent = '12';
+    });
+    document.getElementById('demo-story-recovery').addEventListener('click', () => {
+      demoPost('/api/demo/battery', { level: 40 });
+      batSlider.value = 40;
+      batVal.textContent = '40';
+    });
 
     socket.on('node_update', (data) => {
       nodes[data.node_id] = data;
+      const oldState = prevStates[data.node_id];
+      if (oldState !== undefined && oldState !== data.state) {
+        pushTimeline(`${data.node_id} → ${data.state}`);
+      }
+      prevStates[data.node_id] = data.state;
       renderNodes();
       updateClusterStats();
     });
@@ -176,11 +393,24 @@
     function updateClusterStats() {
       const all = Object.values(nodes);
       const leader = all.find(n => n.state === 'leader');
+      const lid = leader ? leader.node_id : null;
+      if (lid !== prevLeaderId) {
+        if (prevLeaderId !== null || (prevLeaderId === null && lid !== null && all.length)) {
+          pushTimeline(lid ? `Leader → ${lid}` : 'No leader');
+        }
+        prevLeaderId = lid;
+      }
       document.getElementById('stat-leader').textContent = leader ? leader.node_id : '—';
       document.getElementById('stat-term').textContent = leader ? leader.term : (all.length ? Math.max(...all.map(n => n.term || 0)) : 0);
       document.getElementById('stat-nodes').textContent = all.length;
       const leafCount = all.reduce((s, n) => s + (n.leaves ? n.leaves.length : 0), 0);
       document.getElementById('stat-leaves').textContent = leafCount;
+      const mc = all.length ? Math.max(...all.map(n => n.commit_index ?? 0)) : 0;
+      document.getElementById('stat-max-commit').textContent = mc;
+      if (mc > prevMaxCommit) {
+        pushTimeline(`Commit index → ${mc}`);
+        prevMaxCommit = mc;
+      }
     }
 
     // =====================================================
@@ -189,7 +419,11 @@
     function renderMessages() {
       const tbody = document.getElementById('msg-tbody');
       tbody.innerHTML = '';
-      for (const m of msgLog.slice(0, 50)) {
+      let list = msgLog.slice(0, 80);
+      if (msgFilter !== 'all') {
+        list = list.filter((m) => msgTypeBucket(m) === msgFilter);
+      }
+      for (const m of list.slice(0, 50)) {
         const t = new Date(m.timestamp * 1000).toLocaleTimeString();
         const payloadStr = JSON.stringify(m.payload || {}).slice(0, 80);
         tbody.innerHTML += `<tr class="border-b border-gray-800/50">
@@ -273,7 +507,15 @@
     // Initial fetch
     // =====================================================
     fetch('/api/nodes').then(r => r.json()).then(list => {
-      for (const n of list) nodes[n.node_id] = n;
+      for (const n of list) {
+        nodes[n.node_id] = n;
+        prevStates[n.node_id] = n.state;
+      }
+      const leader = list.find(n => n.state === 'leader');
+      prevLeaderId = leader ? leader.node_id : null;
+      if (list.length) {
+        prevMaxCommit = Math.max(...list.map(n => n.commit_index ?? 0));
+      }
       renderNodes();
       updateClusterStats();
     });

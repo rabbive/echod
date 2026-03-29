@@ -15,6 +15,7 @@ import argparse
 import json
 import logging
 import random
+import threading
 import time
 
 import paho.mqtt.client as mqtt
@@ -115,11 +116,31 @@ def main() -> None:
     )
     args = parse_args()
     coordinators = [c.strip() for c in args.coordinators.split(",") if c.strip()]
+    demo_topic = f"echo/{args.cluster}/demo/leaves"
+    pause_state: dict[str, bool] = {"paused": False}
+    pause_lock = threading.Lock()
 
     client = mqtt.Client(client_id="echo-mock-leaves", **_CLIENT_KWARGS)
+
+    def on_message(_client: mqtt.Client, _ud: object, msg: mqtt.MQTTMessage) -> None:
+        if msg.topic != demo_topic:
+            return
+        try:
+            data = json.loads(msg.payload.decode())
+            if "paused" in data:
+                with pause_lock:
+                    pause_state["paused"] = bool(data["paused"])
+                logger.info(
+                    "Mock leaves streaming paused=%s", pause_state["paused"],
+                )
+        except Exception:
+            logger.exception("Failed to parse demo leaves control message")
+
+    client.on_message = on_message
     client.connect(args.broker, args.port)
     client.loop_start()
     time.sleep(0.5)  # let the connection establish
+    client.subscribe(demo_topic)
 
     leaves = [
         MockLeaf(
@@ -137,8 +158,11 @@ def main() -> None:
     logger.info("Streaming sensor data from %d mock leaves (Ctrl-C to stop)", len(leaves))
     try:
         while True:
-            for leaf in leaves:
-                leaf.send_reading()
+            with pause_lock:
+                paused = pause_state["paused"]
+            if not paused:
+                for leaf in leaves:
+                    leaf.send_reading()
             time.sleep(args.interval)
     except KeyboardInterrupt:
         pass

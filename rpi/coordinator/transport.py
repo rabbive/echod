@@ -30,6 +30,27 @@ logger = logging.getLogger(__name__)
 
 MessageHandler = Callable[[str, str, dict[str, Any]], None]
 
+def _reason_code_value(reason_code: Any) -> int | None:
+    """Best-effort conversion of paho reason codes across versions.
+
+    paho-mqtt 2.x may pass `reason_code` as:
+    - an int (v3.1.1 style)
+    - an object with `.value` (ReasonCode)
+    - a list/tuple of reason codes (observed in some callback_api_version paths)
+    """
+    if isinstance(reason_code, int):
+        return reason_code
+    if hasattr(reason_code, "value"):
+        try:
+            return int(getattr(reason_code, "value"))
+        except Exception:
+            return None
+    if isinstance(reason_code, (list, tuple)):
+        if not reason_code:
+            return None
+        return _reason_code_value(reason_code[0])
+    return None
+
 
 class MQTTTransport:
     """Async-friendly MQTT transport for ECHO protocol messages.
@@ -86,19 +107,18 @@ class MQTTTransport:
     def _on_connect(self, _client: Any, _userdata: Any, *args: Any) -> None:
         # paho-mqtt v2 callback signature can include:
         #   (client, userdata, flags, reason_code, properties)
-        # Depending on MQTT version, the reason code may be an int or an
-        # object with a `value` attribute. We search the args to pick the
-        # correct one (not the trailing properties object).
-        reason_code: Any = 0
+        # However, depending on the callback_api_version and broker/client
+        # settings, reason_code has been observed to arrive as a list-like
+        # container as well. Extract robustly and treat unknown/empty as failure.
+        reason_code: Any | None = None
         for a in args:
-            if isinstance(a, int):
-                reason_code = a
-                break
-            if hasattr(a, "value"):
+            if isinstance(a, dict):
+                continue  # flags
+            if isinstance(a, (int, list, tuple)) or hasattr(a, "value"):
                 reason_code = a
                 break
 
-        rc_val = getattr(reason_code, "value", reason_code)
+        rc_val = _reason_code_value(reason_code)
         if rc_val == 0:
             self._connected = True
             self._client.subscribe(self._rpc_topic)
@@ -112,17 +132,16 @@ class MQTTTransport:
 
     def _on_disconnect(self, _client: Any, _userdata: Any, *args: Any) -> None:
         self._connected = False
-        reason_code: Any = 0
+        reason_code: Any | None = None
         for a in args:
-            if isinstance(a, int):
-                reason_code = a
-                break
-            if hasattr(a, "value"):
+            if isinstance(a, dict):
+                continue
+            if isinstance(a, (int, list, tuple)) or hasattr(a, "value"):
                 reason_code = a
                 break
 
-        rc_val = getattr(reason_code, "value", reason_code)
-        if rc_val != 0:
+        rc_val = _reason_code_value(reason_code)
+        if rc_val not in (0, None):
             logger.warning(
                 "%s unexpected MQTT disconnect (reason_code=%s)",
                 self.node_id,

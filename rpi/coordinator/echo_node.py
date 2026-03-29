@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import random
 import time
 from dataclasses import dataclass, field
@@ -260,6 +261,7 @@ class EchoCoordinator:
             "liveness_ping": self._handle_liveness_ping,
             "leaf_register": self._handle_leaf_register,
             "sensor_data": self._handle_sensor_data,
+            "demo_control": self._handle_demo_control,
         }
         handler = _HANDLERS.get(msg_type)
         if handler:
@@ -509,6 +511,33 @@ class EchoCoordinator:
             command={"sensor": sensor_type, "value": value, "leaf": leaf_id},
             trigger="delta",
         )
+
+    # ============================================================ demo (MQTT)
+
+    def _handle_demo_control(self, sender: str, p: dict) -> None:
+        """Apply dashboard demo commands (mock battery only). Broadcast on MQTT."""
+        if os.getenv("ECHO_DEMO", "1") != "1":
+            return
+        if not self.battery.is_mock:
+            return
+        action = p.get("action")
+        if action == "set_battery":
+            level = p.get("level", 100)
+            self.battery.set_mock_level(float(level))
+            logger.info("%s demo: mock battery set to %s%%", self.node_id, level)
+        elif action == "set_drain_rate":
+            rate = p.get("rate", 0.5)
+            self.battery.set_mock_drain_rate(float(rate))
+            logger.info("%s demo: mock drain rate set to %s", self.node_id, rate)
+        elif action == "set_drain_paused":
+            paused = bool(p.get("paused", False))
+            self.battery.set_mock_drain_paused(paused)
+            logger.info("%s demo: mock drain paused=%s", self.node_id, paused)
+        else:
+            logger.warning("%s demo: unknown action %r", self.node_id, action)
+            return
+        self._check_battery()
+        self._publish_status()
 
     # ======================================================= dashboard status
 
