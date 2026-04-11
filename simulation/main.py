@@ -39,11 +39,14 @@ async def run_scenario(
 ) -> None:
     """Run a single protocol scenario with optional partition injection."""
     cluster.message_bus.on_message = collector.on_message
+    partition_injected = False
+    partition_healed = False
 
     for node in cluster.nodes.values():
         collector.snapshot_energy(node.node_id, node.battery)
 
     async def side_effects() -> None:
+        nonlocal partition_injected, partition_healed
         start = time.monotonic()
         tick = 0.1  # seconds between housekeeping ticks
         while True:
@@ -61,13 +64,25 @@ async def run_scenario(
             for node in cluster.nodes.values():
                 collector.snapshot_energy(node.node_id, node.battery)
 
-            if partition_at and elapsed >= partition_at and cluster.message_bus._partitions == []:
+            if (
+                partition_at is not None
+                and not partition_injected
+                and elapsed >= partition_at
+                and cluster.message_bus._partitions == []
+            ):
                 ids = list(cluster.nodes.keys())
                 mid = len(ids) // 2
                 cluster.inject_partition(ids[:mid], ids[mid:])
+                partition_injected = True
 
-            if heal_at and elapsed >= heal_at and cluster.message_bus._partitions:
+            if (
+                heal_at is not None
+                and not partition_healed
+                and elapsed >= heal_at
+                and cluster.message_bus._partitions
+            ):
                 cluster.heal_partition()
+                partition_healed = True
 
             for node in cluster.nodes.values():
                 if getattr(node, "state", None) == NodeState.LEADER:
