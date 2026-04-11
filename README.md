@@ -18,6 +18,10 @@
 
 ECHO extends classic consensus with **energy-aware** behavior (e.g. observer transitions when mock battery drops). The simulator makes protocol and energy metrics easy to compare in a controlled way.
 
+**Architecture (simulation + MQTT, flowcharts):** [docs/ECHO_ARCHITECTURE.plan.md](docs/ECHO_ARCHITECTURE.plan.md)
+
+**Deep dive (dashboard UI, demo controls, ECHO vs Raft):** [docs/ECHO_DEMO_AND_RAFT.md](docs/ECHO_DEMO_AND_RAFT.md)
+
 ---
 
 ## Requirements

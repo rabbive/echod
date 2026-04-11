@@ -4,203 +4,369 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ECHO Protocol — Cluster Dashboard</title>
+
+  <!-- Geist Sans + Geist Mono (from fontsource CDN — same typeface as AIOPicks) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/geist-sans@5.0.0/index.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/geist-mono@5.0.0/index.css">
+
   <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['"Geist Sans"', 'system-ui', 'sans-serif'],
+            mono: ['"Geist Mono"', 'ui-monospace', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
   <style>
-    body { font-family: 'Inter', system-ui, sans-serif; }
+    body { background-color: #09090b; color: #fafafa; }
     .battery-bar { transition: width 0.5s ease; }
-    /* Tailwind is loaded via CDN, but inline `@apply` requires a build step.
-       Use plain CSS here to avoid browser console errors. */
     .state-badge {
-      padding-left: 0.5rem;
-      padding-right: 0.5rem;
-      padding-top: 0.125rem;
-      padding-bottom: 0.125rem;
+      display: inline-flex; align-items: center;
+      padding: 0.15rem 0.55rem;
       border-radius: 9999px;
-      font-size: 0.75rem;
-      font-weight: 700;
+      font-size: 0.65rem;
+      font-weight: 600;
       text-transform: uppercase;
-      letter-spacing: 0.05em;
+      letter-spacing: 0.07em;
+      border: 1px solid;
     }
+    ::-webkit-scrollbar { width: 4px; height: 4px; }
+    ::-webkit-scrollbar-track { background: #18181b; }
+    ::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 2px; }
+    input[type=range] {
+      -webkit-appearance: none; appearance: none;
+      height: 4px; border-radius: 9999px; background: #3f3f46; outline: none;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none;
+      width: 14px; height: 14px; border-radius: 50%;
+      background: #10b981; cursor: pointer;
+    }
+    .node-card-leader { border-color: rgba(16,185,129,0.3) !important; }
   </style>
 </head>
-<body class="bg-gray-950 text-gray-100 min-h-screen">
 
-  <!-- ====================== HEADER ====================== -->
-  <header class="bg-gray-900 border-b border-gray-800 px-6 py-4">
-    <div class="max-w-7xl mx-auto flex items-center justify-between">
-      <div>
-        <h1 class="text-2xl font-bold tracking-tight">
-          <span class="text-emerald-400">ECHO</span> Protocol Dashboard
-        </h1>
-        <p class="text-sm text-gray-400 mt-0.5">Energy-aware Clustered Hierarchical cOnsensus</p>
+<body class="font-sans min-h-screen">
+
+  <!-- ─── HEADER ──────────────────────────────────────────────────────── -->
+  <header class="border-b border-zinc-800 bg-zinc-950 sticky top-0 z-20">
+    <div class="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-7 h-7 rounded-lg bg-emerald-500 flex items-center justify-center shrink-0">
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <circle cx="7" cy="7" r="2.5" fill="white"/>
+            <circle cx="7" cy="7" r="5.5" stroke="white" stroke-width="1.2" stroke-dasharray="2 1.5"/>
+          </svg>
+        </div>
+        <span class="font-semibold text-sm text-zinc-100 tracking-tight">ECHO Protocol</span>
+        <span class="text-zinc-700 select-none">·</span>
+        <span class="text-xs text-zinc-500">Cluster Dashboard</span>
       </div>
-      <div id="cluster-stats" class="flex gap-6 text-sm">
-        <div>
-          <span class="text-gray-500">Leader</span>
-          <span id="stat-leader" class="ml-1 font-mono text-emerald-400">—</span>
+      <div class="flex items-center gap-5 text-xs">
+        <div class="flex items-center gap-1.5">
+          <span class="w-1.5 h-1.5 rounded-full bg-zinc-700" id="sock-dot"></span>
+          <span class="text-zinc-500">Socket</span>
+          <strong id="sock-status" class="text-zinc-400 font-medium">…</strong>
         </div>
-        <div>
-          <span class="text-gray-500">Term</span>
-          <span id="stat-term" class="ml-1 font-mono text-sky-400">0</span>
-        </div>
-        <div>
-          <span class="text-gray-500">Nodes</span>
-          <span id="stat-nodes" class="ml-1 font-mono text-amber-400">0</span>
-        </div>
-        <div>
-          <span class="text-gray-500">Leaves</span>
-          <span id="stat-leaves" class="ml-1 font-mono text-purple-400">0</span>
-        </div>
-        <div>
-          <span class="text-gray-500">Max commit</span>
-          <span id="stat-max-commit" class="ml-1 font-mono text-rose-400">0</span>
-        </div>
-      </div>
-    </div>
-    <div class="border-t border-gray-800/80 px-6 py-2">
-      <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3 text-xs">
-        <span id="dash-url" class="font-mono text-gray-500 truncate max-w-[60vw]"></span>
-        <div class="flex flex-wrap gap-4 text-gray-400">
-          <span>Socket.IO: <strong id="sock-status" class="text-amber-500">…</strong></span>
-          <span>MQTT: <strong id="mqtt-status" class="text-gray-500">…</strong></span>
+        <div class="flex items-center gap-1.5">
+          <span class="w-1.5 h-1.5 rounded-full bg-zinc-700" id="mqtt-dot"></span>
+          <span class="text-zinc-500">MQTT</span>
+          <strong id="mqtt-status" class="text-zinc-400 font-medium">…</strong>
         </div>
       </div>
     </div>
   </header>
 
-  <div class="max-w-7xl mx-auto px-6 pt-4">
-    <details class="group bg-gray-900/50 rounded-lg border border-gray-800 open:border-gray-700">
-      <summary class="cursor-pointer list-none px-4 py-2 text-sm text-gray-400 hover:text-gray-200">
-        What am I seeing? — glossary (click to expand)
-      </summary>
-      <div class="px-4 pb-3 pt-0 text-xs text-gray-500 space-y-2 border-t border-gray-800/80">
-        <p><strong class="text-gray-400">Leader</strong> — coordinator that accepts replicated writes for this term; only one should be <code class="text-gray-600">leader</code> at a time in a healthy cluster.</p>
-        <p><strong class="text-gray-400">Term</strong> — monotonic election generation; goes up when a new election wins.</p>
-        <p><strong class="text-gray-400">Max commit</strong> — highest commit index across nodes (replicated log applied).</p>
-        <p><strong class="text-gray-400">Leaves</strong> — registered mock sensors; traffic shows up as replicated log entries.</p>
-        <p><strong class="text-gray-400">Charts / broadcast table</strong> — live MQTT traffic. If nothing moves, check Socket.IO and MQTT indicators above (macOS often uses port <code class="text-gray-600">5001</code> if <code class="text-gray-600">5000</code> is taken by AirPlay).</p>
+  <!-- ─── CLUSTER STATS BAR ────────────────────────────────────────────── -->
+  <div class="border-b border-zinc-800/60 bg-zinc-900/40">
+    <div class="max-w-7xl mx-auto px-6 py-2.5 flex items-center gap-1 overflow-x-auto">
+      <div class="flex items-center gap-2 px-3 py-1 rounded-md shrink-0">
+        <span class="text-[10px] text-zinc-600 uppercase tracking-widest font-semibold">Leader</span>
+        <span id="stat-leader" class="font-mono text-sm text-emerald-400">—</span>
       </div>
-    </details>
+      <span class="text-zinc-800 mx-1">|</span>
+      <div class="flex items-center gap-2 px-3 py-1 rounded-md shrink-0">
+        <span class="text-[10px] text-zinc-600 uppercase tracking-widest font-semibold">Term</span>
+        <span id="stat-term" class="font-mono text-sm text-sky-400">0</span>
+      </div>
+      <span class="text-zinc-800 mx-1">|</span>
+      <div class="flex items-center gap-2 px-3 py-1 rounded-md shrink-0">
+        <span class="text-[10px] text-zinc-600 uppercase tracking-widest font-semibold">Nodes</span>
+        <span id="stat-nodes" class="font-mono text-sm text-zinc-200">0</span>
+      </div>
+      <span class="text-zinc-800 mx-1">|</span>
+      <div class="flex items-center gap-2 px-3 py-1 rounded-md shrink-0">
+        <span class="text-[10px] text-zinc-600 uppercase tracking-widest font-semibold">Leaves</span>
+        <span id="stat-leaves" class="font-mono text-sm text-violet-400">0</span>
+      </div>
+      <span class="text-zinc-800 mx-1">|</span>
+      <div class="flex items-center gap-2 px-3 py-1 rounded-md shrink-0">
+        <span class="text-[10px] text-zinc-600 uppercase tracking-widest font-semibold">Max Commit</span>
+        <span id="stat-max-commit" class="font-mono text-sm text-zinc-200">0</span>
+      </div>
+      <div class="ml-auto pl-4 shrink-0">
+        <span id="dash-url" class="font-mono text-[10px] text-zinc-700 truncate max-w-[40vw] block"></span>
+      </div>
+    </div>
   </div>
 
-  <main class="max-w-7xl mx-auto px-6 py-6 space-y-6">
+  <!-- ─── MAIN ──────────────────────────────────────────────────────────── -->
+  <main class="max-w-7xl mx-auto px-6 py-8 space-y-6">
 
-    <!-- =================== DEMO CONTROLS =================== -->
-    <section class="bg-gray-900 rounded-xl p-5 border border-amber-900/40">
-      <h2 class="text-lg font-semibold mb-1 text-amber-200/90">Demo controls</h2>
-      <p class="text-xs text-gray-500 mb-4">
-        Mock coordinators only: sets battery / drain via MQTT broadcast. Pause/resume stops mock leaf sensor traffic (requires <code class="text-gray-400">mock_leaf</code> running).
-      </p>
-      <ol class="text-xs text-gray-500 mb-4 list-decimal list-inside space-y-1 border-l border-amber-900/30 pl-3">
-        <li>Confirm a <strong class="text-gray-400">Leader</strong> appears in the header.</li>
-        <li>Optional: <strong class="text-gray-400">Pause leaves</strong> to quiet the broadcast table.</li>
-        <li>Set battery to <strong class="text-gray-400">10%</strong> to show <code class="text-gray-600">observer</code> (energy gating).</li>
-        <li>Use <strong class="text-gray-400">25%</strong> to show recovery toward follower.</li>
-        <li><strong class="text-gray-400">Resume leaves</strong> to show commits again.</li>
-      </ol>
-      <div class="flex flex-wrap gap-2 mb-4">
-        <button type="button" id="demo-story-stress" class="px-3 py-1.5 rounded-lg bg-rose-900/40 border border-rose-800 hover:border-rose-600 text-xs">Story: Energy stress (12%)</button>
-        <button type="button" id="demo-story-recovery" class="px-3 py-1.5 rounded-lg bg-emerald-900/40 border border-emerald-800 hover:border-emerald-600 text-xs">Story: Recovery (40%)</button>
-      </div>
-      <div class="flex flex-wrap items-end gap-4 text-sm">
-        <div>
-          <label class="block text-gray-500 text-xs mb-1">Mock battery %</label>
-          <div class="flex items-center gap-2">
-            <input type="range" id="demo-battery" min="0" max="100" value="50" class="w-40 accent-emerald-500" />
-            <span id="demo-battery-val" class="font-mono text-gray-300 w-8">50</span>
-            <button type="button" id="demo-apply-battery" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium">Apply</button>
+    <!-- ABOUT ECHO -->
+    <section class="bg-zinc-900 rounded-xl border border-zinc-800 px-5 py-4">
+      <div class="flex flex-wrap items-start justify-between gap-4">
+        <div class="space-y-1 max-w-2xl">
+          <div class="flex items-center gap-2 mb-2">
+            <span class="text-[10px] font-semibold text-emerald-500 uppercase tracking-widest px-2 py-0.5 rounded-full border border-emerald-500/30 bg-emerald-500/5">ECHO Protocol</span>
+            <span class="text-[10px] font-semibold text-zinc-600 uppercase tracking-widest px-2 py-0.5 rounded-full border border-zinc-700 bg-zinc-800">vs Raft baseline</span>
+          </div>
+          <p class="text-xs text-zinc-400 leading-relaxed">
+            <strong class="text-zinc-200">ECHO</strong> extends Raft with <strong class="text-zinc-200">energy-aware vote gating</strong> — coordinators below <strong class="text-zinc-200">T<sub>low</sub> = 15%</strong> battery become <span class="font-mono text-red-400">observer</span> and leave the quorum, preventing depleted nodes from disrupting consensus. Once battery recovers past <strong class="text-zinc-200">T<sub>restore</sub> = 25%</strong> they re-enter as <span class="font-mono text-sky-400">follower</span>.
+          </p>
+        </div>
+        <div class="flex items-center gap-4 text-xs shrink-0">
+          <div class="text-center">
+            <div class="font-mono text-lg font-semibold text-zinc-100" id="uptime-display">0:00</div>
+            <div class="text-[10px] text-zinc-600 uppercase tracking-widest mt-0.5">Uptime</div>
+          </div>
+          <div class="w-px h-8 bg-zinc-800"></div>
+          <div class="text-center">
+            <div class="font-mono text-lg font-semibold text-emerald-400" id="total-msgs-display">0</div>
+            <div class="text-[10px] text-zinc-600 uppercase tracking-widest mt-0.5">Total msgs</div>
           </div>
         </div>
-        <div class="flex gap-2">
-          <button type="button" data-battery="10" class="demo-preset px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 hover:border-amber-600 text-xs">10% (observer)</button>
-          <button type="button" data-battery="25" class="demo-preset px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 hover:border-amber-600 text-xs">25% (restore)</button>
-          <button type="button" data-battery="100" class="demo-preset px-2 py-1.5 rounded-lg bg-gray-800 border border-gray-700 hover:border-amber-600 text-xs">100%</button>
-        </div>
-        <div>
-          <label class="block text-gray-500 text-xs mb-1">Drain %/s</label>
-          <div class="flex items-center gap-2">
-            <input type="number" id="demo-drain-rate" min="0" step="0.1" value="0.5" class="w-20 bg-gray-800 border border-gray-700 rounded px-2 py-1 font-mono text-xs" />
-            <button type="button" id="demo-apply-drain" class="px-3 py-1.5 rounded-lg bg-sky-700 hover:bg-sky-600 text-white text-xs font-medium">Apply</button>
-          </div>
-        </div>
-        <div class="flex gap-2">
-          <button type="button" id="demo-drain-pause" class="px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 hover:border-amber-600 text-xs">Pause drain</button>
-          <button type="button" id="demo-drain-resume" class="px-3 py-1.5 rounded-lg bg-gray-800 border border-gray-700 hover:border-amber-600 text-xs">Resume drain</button>
-        </div>
-        <div class="flex gap-2 border-l border-gray-800 pl-4">
-          <button type="button" id="demo-leaves-pause" class="px-3 py-1.5 rounded-lg bg-violet-900/50 border border-violet-700 hover:bg-violet-800/50 text-xs">Pause leaves</button>
-          <button type="button" id="demo-leaves-resume" class="px-3 py-1.5 rounded-lg bg-violet-900/50 border border-violet-700 hover:bg-violet-800/50 text-xs">Resume leaves</button>
-        </div>
       </div>
-      <p id="demo-status" class="mt-3 text-xs font-mono text-gray-500 min-h-[1rem]"></p>
     </section>
 
-    <!-- =================== NODE CARDS =================== -->
+    <!-- COORDINATOR NODES -->
     <section>
-      <h2 class="text-lg font-semibold mb-3 text-gray-300">Coordinator Nodes</h2>
-      <div id="node-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
-        <!-- cards injected by JS -->
+      <div class="flex items-center gap-3 mb-4">
+        <h2 class="text-[11px] font-semibold text-zinc-500 uppercase tracking-widest">Coordinator Nodes</h2>
+        <div class="flex-1 h-px bg-zinc-800/80"></div>
+      </div>
+      <div id="node-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-3">
+        <!-- injected by JS -->
       </div>
     </section>
 
-    <!-- =================== CHARTS =================== -->
-    <section class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <div class="bg-gray-900 rounded-xl p-5 border border-gray-800">
-        <h3 class="text-sm font-semibold text-gray-400 mb-3">Message Traffic (last 60 s)</h3>
-        <canvas id="traffic-chart" height="180"></canvas>
+    <!-- CHARTS -->
+    <section class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div class="bg-zinc-900 rounded-xl p-5 border border-zinc-800">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-[11px] font-semibold text-zinc-500 uppercase tracking-widest">Message Traffic</h3>
+          <span class="text-[10px] text-zinc-700 font-mono">last 60 s</span>
+        </div>
+        <canvas id="traffic-chart" height="150"></canvas>
       </div>
-      <div class="bg-gray-900 rounded-xl p-5 border border-gray-800">
-        <h3 class="text-sm font-semibold text-gray-400 mb-3">Battery Levels</h3>
-        <canvas id="battery-chart" height="180"></canvas>
+      <div class="bg-zinc-900 rounded-xl p-5 border border-zinc-800">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-[11px] font-semibold text-zinc-500 uppercase tracking-widest">Battery Levels</h3>
+          <span class="text-[10px] text-zinc-700 font-mono">live</span>
+        </div>
+        <canvas id="battery-chart" height="150"></canvas>
       </div>
     </section>
 
-    <!-- =================== EVENT TIMELINE =================== -->
-    <section class="bg-gray-900 rounded-xl p-5 border border-gray-800">
-      <h3 class="text-sm font-semibold text-gray-400 mb-3">Recent cluster events</h3>
-      <p class="text-xs text-gray-600 mb-2">Leader changes, role transitions, and commit milestones (derived from live status).</p>
-      <ul id="event-timeline" class="text-xs font-mono text-gray-400 max-h-40 overflow-y-auto space-y-1"></ul>
+    <!-- DEMO CONTROLS -->
+    <section class="bg-zinc-900 rounded-xl border border-zinc-800 overflow-hidden">
+      <button type="button" id="demo-toggle"
+        class="w-full flex items-center justify-between px-5 py-4 text-left hover:bg-zinc-800/40 transition-colors">
+        <div>
+          <h2 class="text-sm font-semibold text-zinc-200">Demo Controls</h2>
+          <p class="text-xs text-zinc-600 mt-0.5">Mock coordinators only — set battery, drain rate & leaf traffic via MQTT</p>
+        </div>
+        <svg id="demo-chevron" class="w-4 h-4 text-zinc-600 transition-transform duration-200"
+          style="transform:rotate(180deg)" viewBox="0 0 16 16" fill="none">
+          <path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
+            stroke-linejoin="round"/>
+        </svg>
+      </button>
+
+      <div id="demo-body" class="border-t border-zinc-800 px-5 pb-5 pt-4 space-y-5">
+
+        <!-- Story presets -->
+        <div class="flex flex-wrap gap-2">
+          <button type="button" id="demo-story-stress"
+            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700
+              hover:border-red-800/60 hover:bg-red-950/20 text-xs text-zinc-300 transition-colors">
+            <span class="w-1.5 h-1.5 rounded-full bg-red-400 shrink-0"></span>
+            Energy stress — 12%
+          </button>
+          <button type="button" id="demo-story-recovery"
+            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700
+              hover:border-emerald-800/60 hover:bg-emerald-950/20 text-xs text-zinc-300 transition-colors">
+            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 shrink-0"></span>
+            Recovery — 40%
+          </button>
+        </div>
+
+        <!-- Step-by-step presentation guide -->
+        <div class="bg-zinc-800/50 border border-zinc-700/50 rounded-lg px-4 py-3">
+          <p class="text-[10px] font-semibold text-zinc-500 uppercase tracking-widest mb-2">Presentation Script</p>
+          <ol class="space-y-1.5 text-xs text-zinc-500 list-none">
+            <li class="flex gap-2.5"><span class="text-zinc-700 font-mono shrink-0">1.</span><span>Wait for a <strong class="text-zinc-300">Leader</strong> to appear in the stats bar above. Leaves will be visible on coordinator cards.</span></li>
+            <li class="flex gap-2.5"><span class="text-zinc-700 font-mono shrink-0">2.</span><span>Optional: click <strong class="text-zinc-300">Pause Leaves</strong> to quiet the broadcast table and focus on coordinator states.</span></li>
+            <li class="flex gap-2.5"><span class="text-zinc-700 font-mono shrink-0">3.</span><span>Click <strong class="text-zinc-300 font-mono">Energy stress — 12%</strong> or set battery to <strong class="text-zinc-300">10%</strong> → watch nodes drop to <span class="font-mono text-red-400">observer</span> (energy gating, T<sub>low</sub>=15%).</span></li>
+            <li class="flex gap-2.5"><span class="text-zinc-700 font-mono shrink-0">4.</span><span>Click <strong class="text-zinc-300 font-mono">Recovery — 40%</strong> or set to <strong class="text-zinc-300">25%</strong> → nodes recover to <span class="font-mono text-sky-400">follower</span> (T<sub>restore</sub>=25%).</span></li>
+            <li class="flex gap-2.5"><span class="text-zinc-700 font-mono shrink-0">5.</span><span>Click <strong class="text-zinc-300">Resume Leaves</strong> → commits flow again. Watch <strong class="text-zinc-300">Max Commit</strong> increment in the stats bar.</span></li>
+          </ol>
+        </div>
+
+        <!-- Three columns -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+          <!-- Battery -->
+          <div class="space-y-3">
+            <label class="text-[10px] font-semibold text-zinc-500 uppercase tracking-widest block">Mock Battery %</label>
+            <div class="flex items-center gap-3">
+              <input type="range" id="demo-battery" min="0" max="100" value="50" class="flex-1" />
+              <span id="demo-battery-val" class="font-mono text-sm text-zinc-200 w-8 text-right shrink-0">50</span>
+            </div>
+            <div class="flex gap-1.5">
+              <button type="button" data-battery="10"
+                class="demo-preset flex-1 py-1.5 rounded-md bg-zinc-800 border border-zinc-700
+                  hover:border-zinc-500 text-[11px] text-zinc-400 transition-colors">10%</button>
+              <button type="button" data-battery="25"
+                class="demo-preset flex-1 py-1.5 rounded-md bg-zinc-800 border border-zinc-700
+                  hover:border-zinc-500 text-[11px] text-zinc-400 transition-colors">25%</button>
+              <button type="button" data-battery="100"
+                class="demo-preset flex-1 py-1.5 rounded-md bg-zinc-800 border border-zinc-700
+                  hover:border-zinc-500 text-[11px] text-zinc-400 transition-colors">100%</button>
+            </div>
+            <button type="button" id="demo-apply-battery"
+              class="w-full py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs
+                font-semibold transition-colors">
+              Apply Battery
+            </button>
+          </div>
+
+          <!-- Drain -->
+          <div class="space-y-3">
+            <label class="text-[10px] font-semibold text-zinc-500 uppercase tracking-widest block">Drain Rate %/s</label>
+            <input type="number" id="demo-drain-rate" min="0" step="0.1" value="0.5"
+              class="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-sm
+                text-zinc-200 focus:outline-none focus:border-zinc-500 transition-colors" />
+            <button type="button" id="demo-apply-drain"
+              class="w-full py-2 rounded-lg bg-sky-700 hover:bg-sky-600 text-white text-xs
+                font-semibold transition-colors">
+              Apply Drain
+            </button>
+            <div class="flex gap-1.5">
+              <button type="button" id="demo-drain-pause"
+                class="flex-1 py-1.5 rounded-md bg-zinc-800 border border-zinc-700
+                  hover:border-zinc-500 text-[11px] text-zinc-400 transition-colors">Pause</button>
+              <button type="button" id="demo-drain-resume"
+                class="flex-1 py-1.5 rounded-md bg-zinc-800 border border-zinc-700
+                  hover:border-zinc-500 text-[11px] text-zinc-400 transition-colors">Resume</button>
+            </div>
+          </div>
+
+          <!-- Leaves -->
+          <div class="space-y-3">
+            <label class="text-[10px] font-semibold text-zinc-500 uppercase tracking-widest block">Leaf Traffic</label>
+            <p class="text-xs text-zinc-600 leading-relaxed">
+              Pause or resume mock sensor data from leaf nodes to quiet the broadcast table.
+            </p>
+            <button type="button" id="demo-leaves-pause"
+              class="w-full py-2 rounded-lg bg-zinc-800 border border-zinc-700
+                hover:border-violet-700/50 hover:bg-violet-950/20 text-xs text-zinc-300 transition-colors">
+              Pause Leaves
+            </button>
+            <button type="button" id="demo-leaves-resume"
+              class="w-full py-2 rounded-lg bg-zinc-800 border border-zinc-700
+                hover:border-violet-700/50 hover:bg-violet-950/20 text-xs text-zinc-300 transition-colors">
+              Resume Leaves
+            </button>
+          </div>
+        </div>
+
+        <p id="demo-status" class="text-[11px] font-mono text-zinc-600 min-h-[1rem]"></p>
+      </div>
     </section>
 
-    <!-- =================== LOG TABLE =================== -->
-    <section class="bg-gray-900 rounded-xl p-5 border border-gray-800">
-      <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
-        <h3 class="text-sm font-semibold text-gray-400">Recent Broadcast Messages</h3>
-        <label class="text-xs text-gray-500 flex items-center gap-2">
-          Filter
-          <select id="msg-filter" class="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-gray-300 text-xs">
-            <option value="all">All types</option>
-            <option value="liveness">liveness_ping</option>
-            <option value="demo">demo_control</option>
-            <option value="other">Other</option>
-          </select>
-        </label>
+    <!-- EVENT TIMELINE + MESSAGE LOG side by side on large screens -->
+    <section class="grid grid-cols-1 lg:grid-cols-5 gap-4">
+
+      <!-- Event timeline (narrower) -->
+      <div class="lg:col-span-2 bg-zinc-900 rounded-xl border border-zinc-800 overflow-hidden">
+        <div class="px-5 py-4 border-b border-zinc-800 flex items-center gap-3">
+          <h3 class="text-[11px] font-semibold text-zinc-500 uppercase tracking-widest">Cluster Events</h3>
+        </div>
+        <ul id="event-timeline"
+          class="text-[11px] font-mono text-zinc-400 max-h-52 overflow-y-auto divide-y divide-zinc-800/40 px-0"></ul>
       </div>
-      <div class="overflow-x-auto max-h-64 overflow-y-auto">
-        <table class="w-full text-xs text-left">
-          <thead class="text-gray-500 uppercase border-b border-gray-800 sticky top-0 bg-gray-900">
-            <tr>
-              <th class="py-2 pr-4">Time</th>
-              <th class="py-2 pr-4">Sender</th>
-              <th class="py-2 pr-4">Type</th>
-              <th class="py-2">Payload</th>
-            </tr>
-          </thead>
-          <tbody id="msg-tbody" class="font-mono text-gray-300"></tbody>
-        </table>
+
+      <!-- Message log (wider) -->
+      <div class="lg:col-span-3 bg-zinc-900 rounded-xl border border-zinc-800 overflow-hidden">
+        <div class="px-5 py-4 border-b border-zinc-800 flex flex-wrap items-center justify-between gap-3">
+          <h3 class="text-[11px] font-semibold text-zinc-500 uppercase tracking-widest">Broadcast Messages</h3>
+          <label class="flex items-center gap-2 text-[11px] text-zinc-600">
+            Filter
+            <select id="msg-filter"
+              class="bg-zinc-800 border border-zinc-700 rounded-md px-2 py-1.5 text-zinc-300 text-[11px]
+                focus:outline-none focus:border-zinc-500">
+              <option value="all">All types</option>
+              <option value="liveness">liveness_ping</option>
+              <option value="demo">demo_control</option>
+              <option value="other">Other</option>
+            </select>
+          </label>
+        </div>
+        <div class="overflow-x-auto max-h-52 overflow-y-auto">
+          <table class="w-full text-[11px] text-left">
+            <thead class="text-zinc-600 uppercase tracking-widest border-b border-zinc-800 sticky top-0 bg-zinc-900">
+              <tr>
+                <th class="py-2.5 px-5 font-semibold">Time</th>
+                <th class="py-2.5 pr-5 font-semibold">Sender</th>
+                <th class="py-2.5 pr-5 font-semibold">Type</th>
+                <th class="py-2.5 pr-5 font-semibold">Payload</th>
+              </tr>
+            </thead>
+            <tbody id="msg-tbody" class="font-mono text-zinc-300 divide-y divide-zinc-800/30"></tbody>
+          </table>
+        </div>
       </div>
     </section>
+
+    <!-- GLOSSARY -->
+    <details class="group bg-zinc-900/40 rounded-xl border border-zinc-800/60">
+      <summary
+        class="cursor-pointer list-none px-5 py-3.5 text-xs text-zinc-600 hover:text-zinc-400
+          flex items-center gap-2 transition-colors">
+        <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 16 16" fill="none">
+          <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.2"/>
+          <path d="M8 7v4.5M8 5v.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+        Glossary — what am I seeing?
+      </summary>
+      <div class="px-5 pb-4 pt-3 text-[11px] text-zinc-600 space-y-2 border-t border-zinc-800/60 leading-relaxed">
+        <p><strong class="text-zinc-400">Leader</strong> — coordinator that accepts replicated writes; only one per healthy cluster per term.</p>
+        <p><strong class="text-zinc-400">Term</strong> — monotonic election generation; increments on each new election win.</p>
+        <p><strong class="text-zinc-400">Max commit</strong> — highest commit index applied across all nodes.</p>
+        <p><strong class="text-zinc-400">Leaves</strong> — registered mock sensors; their traffic appears as log entries.</p>
+        <p><strong class="text-zinc-400">Observer</strong> — node below energy threshold, removed from voting quorum.</p>
+        <p><strong class="text-zinc-400">Charts / table</strong> — live via MQTT → Socket.IO. If nothing moves, check status indicators in the header.</p>
+      </div>
+    </details>
+
   </main>
 
+  <!-- ─── SCRIPTS ───────────────────────────────────────────────────────── -->
   <script>
-    // =====================================================
+    // ═══════════════════════════════════════════
     // State
-    // =====================================================
+    // ═══════════════════════════════════════════
     const nodes = {};
     const msgLog = [];
-    const trafficData = [];
     const TRAFFIC_WINDOW = 60;
     const eventTimeline = [];
     let prevLeaderId = null;
@@ -210,13 +376,40 @@
 
     document.getElementById('dash-url').textContent = window.location.href;
 
+    // ─── Uptime timer ────────────────────────
+    const _startTime = Date.now();
+    let _totalMsgCount = 0;
+    function formatUptime(ms) {
+      const s = Math.floor(ms / 1000);
+      const m = Math.floor(s / 60);
+      const h = Math.floor(m / 60);
+      if (h > 0) return `${h}:${String(m % 60).padStart(2,'0')}:${String(s % 60).padStart(2,'0')}`;
+      return `${m}:${String(s % 60).padStart(2,'0')}`;
+    }
+    setInterval(() => {
+      document.getElementById('uptime-display').textContent = formatUptime(Date.now() - _startTime);
+    }, 1000);
+
+    // ─── Demo panel toggle ───────────────────
+    const demoBody = document.getElementById('demo-body');
+    const demoChevron = document.getElementById('demo-chevron');
+    document.getElementById('demo-toggle').addEventListener('click', () => {
+      const open = !demoBody.classList.contains('hidden');
+      demoBody.classList.toggle('hidden', open);
+      demoChevron.style.transform = open ? 'rotate(0deg)' : 'rotate(180deg)';
+    });
+
+    // ─── Timeline ───────────────────────────
     function pushTimeline(text) {
       const t = new Date().toLocaleTimeString();
       eventTimeline.unshift({ t, text });
       if (eventTimeline.length > 40) eventTimeline.length = 40;
       const ul = document.getElementById('event-timeline');
       ul.innerHTML = eventTimeline.map((e) =>
-        `<li class="border-b border-gray-800/40 py-0.5"><span class="text-gray-600">${e.t}</span> — ${e.text}</li>`
+        `<li class="flex items-baseline gap-2 px-4 py-1.5 hover:bg-zinc-800/30 transition-colors">
+          <span class="text-zinc-700 shrink-0">${e.t}</span>
+          <span class="text-zinc-400">${e.text}</span>
+        </li>`
       ).join('');
     }
 
@@ -227,21 +420,21 @@
       return 'other';
     }
 
-    // =====================================================
+    // ═══════════════════════════════════════════
     // Socket.IO
-    // =====================================================
+    // ═══════════════════════════════════════════
     const socket = io();
     const demoStatus = document.getElementById('demo-status');
-    const sockEl = document.getElementById('sock-status');
-    const mqttEl = document.getElementById('mqtt-status');
 
     socket.on('connect', () => {
-      sockEl.textContent = 'connected';
-      sockEl.className = 'text-emerald-400';
+      document.getElementById('sock-status').textContent = 'connected';
+      document.getElementById('sock-status').className = 'text-emerald-400 font-medium';
+      document.getElementById('sock-dot').className = 'w-1.5 h-1.5 rounded-full bg-emerald-500';
     });
     socket.on('disconnect', () => {
-      sockEl.textContent = 'disconnected';
-      sockEl.className = 'text-red-400';
+      document.getElementById('sock-status').textContent = 'disconnected';
+      document.getElementById('sock-status').className = 'text-red-400 font-medium';
+      document.getElementById('sock-dot').className = 'w-1.5 h-1.5 rounded-full bg-red-500';
     });
 
     async function pollMqttStatus() {
@@ -249,15 +442,22 @@
         const r = await fetch('/api/dashboard-status');
         const j = await r.json();
         const ok = j.mqtt_connected;
-        mqttEl.textContent = ok
+        const label = ok
           ? (j.seconds_since_last_mqtt_message != null
-              ? `ok (${j.broker}, last msg ${j.seconds_since_last_mqtt_message.toFixed(1)}s ago)`
-              : `ok (${j.broker}, waiting for data)`)
+              ? `${j.broker} · ${j.seconds_since_last_mqtt_message.toFixed(1)}s ago`
+              : `${j.broker} · waiting`)
           : 'disconnected';
-        mqttEl.className = ok ? 'text-emerald-400' : 'text-red-400';
-      } catch (e) {
-        mqttEl.textContent = 'unknown';
-        mqttEl.className = 'text-amber-500';
+        document.getElementById('mqtt-status').textContent = label;
+        document.getElementById('mqtt-status').className = ok
+          ? 'text-emerald-400 font-medium'
+          : 'text-red-400 font-medium';
+        document.getElementById('mqtt-dot').className = ok
+          ? 'w-1.5 h-1.5 rounded-full bg-emerald-500'
+          : 'w-1.5 h-1.5 rounded-full bg-red-500';
+      } catch {
+        document.getElementById('mqtt-status').textContent = 'unknown';
+        document.getElementById('mqtt-status').className = 'text-amber-500 font-medium';
+        document.getElementById('mqtt-dot').className = 'w-1.5 h-1.5 rounded-full bg-amber-500';
       }
     }
     pollMqttStatus();
@@ -277,16 +477,15 @@
         });
         const j = await r.json();
         if (j.ok) {
-          demoStatus.textContent = 'OK ' + url;
-          demoStatus.classList.remove('text-red-400');
-          demoStatus.classList.add('text-emerald-500/80');
+          demoStatus.textContent = '✓ ' + url;
+          demoStatus.className = 'text-[11px] font-mono text-emerald-500/80 min-h-[1rem]';
         } else {
           demoStatus.textContent = (j.error || 'Error') + ' — ' + url;
-          demoStatus.classList.add('text-red-400');
+          demoStatus.className = 'text-[11px] font-mono text-red-400 min-h-[1rem]';
         }
       } catch (e) {
         demoStatus.textContent = String(e);
-        demoStatus.classList.add('text-red-400');
+        demoStatus.className = 'text-[11px] font-mono text-red-400 min-h-[1rem]';
       }
     }
 
@@ -305,8 +504,7 @@
       });
     });
     document.getElementById('demo-apply-drain').addEventListener('click', () => {
-      const rate = parseFloat(document.getElementById('demo-drain-rate').value);
-      demoPost('/api/demo/drain-rate', { rate });
+      demoPost('/api/demo/drain-rate', { rate: parseFloat(document.getElementById('demo-drain-rate').value) });
     });
     document.getElementById('demo-drain-pause').addEventListener('click', () => demoPost('/api/demo/drain-paused', { paused: true }));
     document.getElementById('demo-drain-resume').addEventListener('click', () => demoPost('/api/demo/drain-paused', { paused: false }));
@@ -315,24 +513,21 @@
 
     document.getElementById('demo-story-stress').addEventListener('click', () => {
       demoPost('/api/demo/battery', { level: 12 });
-      batSlider.value = 12;
-      batVal.textContent = '12';
+      batSlider.value = 12; batVal.textContent = '12';
     });
     document.getElementById('demo-story-recovery').addEventListener('click', () => {
       demoPost('/api/demo/battery', { level: 40 });
-      batSlider.value = 40;
-      batVal.textContent = '40';
+      batSlider.value = 40; batVal.textContent = '40';
     });
 
     socket.on('node_update', (data) => {
       nodes[data.node_id] = data;
       const oldState = prevStates[data.node_id];
       if (oldState !== undefined && oldState !== data.state) {
-        pushTimeline(`${data.node_id} → ${data.state}`);
+        pushTimeline(`<span class="text-zinc-300 font-semibold">${data.node_id}</span> → <span class="text-zinc-300">${data.state}</span>`);
       }
       prevStates[data.node_id] = data.state;
-      renderNodes();
-      updateClusterStats();
+      markNodeDirty(data.node_id);
     });
 
     socket.on('broadcast_msg', (data) => {
@@ -340,54 +535,142 @@
       if (msgLog.length > 200) msgLog.length = 200;
       renderMessages();
       bumpTraffic();
+      _totalMsgCount++;
+      document.getElementById('total-msgs-display').textContent = _totalMsgCount.toLocaleString();
     });
 
-    // =====================================================
+    // ═══════════════════════════════════════════
     // Node cards
-    // =====================================================
-    const STATE_COLORS = {
-      leader:       'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
-      follower:     'bg-sky-500/20 text-sky-400 border-sky-500/30',
-      candidate:    'bg-amber-500/20 text-amber-400 border-amber-500/30',
-      observer:     'bg-red-500/20 text-red-400 border-red-500/30',
-      local_leader: 'bg-violet-500/20 text-violet-400 border-violet-500/30',
+    // ═══════════════════════════════════════════
+    const STATE_STYLES = {
+      leader:       { badge: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30', card: 'node-card-leader' },
+      follower:     { badge: 'bg-sky-500/10 text-sky-400 border-sky-500/30',             card: '' },
+      candidate:    { badge: 'bg-amber-500/10 text-amber-400 border-amber-500/30',       card: '' },
+      observer:     { badge: 'bg-red-500/10 text-red-400 border-red-500/30',             card: '' },
+      local_leader: { badge: 'bg-violet-500/10 text-violet-400 border-violet-500/30',    card: '' },
     };
 
     function batteryColor(pct) {
-      if (pct > 50) return 'bg-emerald-500';
-      if (pct > 25) return 'bg-amber-500';
-      return 'bg-red-500';
+      if (pct > 50) return '#10b981';
+      if (pct > 25) return '#f59e0b';
+      return '#ef4444';
+    }
+
+    const dirtyNodeIds = new Set();
+    let renderScheduled = false;
+
+    function ensureNodeCard(nodeId) {
+      const grid = document.getElementById('node-grid');
+      let el = document.getElementById(`node-card-${nodeId}`);
+      if (el) return el;
+
+      el = document.createElement('div');
+      el.id = `node-card-${nodeId}`;
+      el.dataset.nodeId = nodeId;
+      el.className = 'bg-zinc-900 rounded-xl p-4 border border-zinc-800 space-y-3 transition-colors duration-300';
+      el.innerHTML = `
+        <div class="flex items-center justify-between gap-2">
+          <span class="node-id font-mono font-semibold text-sm text-zinc-200 truncate"></span>
+          <span class="state-badge shrink-0"></span>
+        </div>
+        <div>
+          <div class="flex justify-between text-[10px] mb-1.5">
+            <span class="text-zinc-600 uppercase tracking-widest font-semibold">Battery</span>
+            <span class="battery-pct font-mono text-zinc-400"></span>
+          </div>
+          <div class="w-full bg-zinc-800 rounded-full h-1.5 overflow-hidden">
+            <div class="battery-bar h-1.5 rounded-full" style="width:0%"></div>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-y-1.5 gap-x-2">
+          <div class="flex items-baseline gap-1">
+            <span class="text-[10px] text-zinc-600 uppercase tracking-widest font-semibold">Term</span>
+            <span class="term font-mono text-xs text-zinc-300"></span>
+          </div>
+          <div class="flex items-baseline gap-1">
+            <span class="text-[10px] text-zinc-600 uppercase tracking-widest font-semibold">Log</span>
+            <span class="log-length font-mono text-xs text-zinc-300"></span>
+          </div>
+          <div class="flex items-baseline gap-1">
+            <span class="text-[10px] text-zinc-600 uppercase tracking-widest font-semibold">Commit</span>
+            <span class="commit-index font-mono text-xs text-zinc-300"></span>
+          </div>
+          <div class="flex items-baseline gap-1">
+            <span class="text-[10px] text-zinc-600 uppercase tracking-widest font-semibold">Msgs</span>
+            <span class="msgs font-mono text-xs text-zinc-300"></span>
+          </div>
+          <div class="flex items-baseline gap-1 col-span-2">
+            <span class="text-[10px] text-zinc-600 uppercase tracking-widest font-semibold">Leader changes</span>
+            <span class="leader-changes font-mono text-xs text-amber-400/80"></span>
+          </div>
+        </div>
+        <div class="leaves-row flex flex-wrap gap-1 min-h-0"></div>
+      `;
+
+      const siblings = Array.from(grid.children);
+      const idx = siblings.findIndex((c) => (c.dataset.nodeId || '').localeCompare(nodeId) > 0);
+      if (idx === -1) grid.appendChild(el);
+      else grid.insertBefore(el, siblings[idx]);
+
+      return el;
+    }
+
+    function updateNodeCard(n) {
+      const el = ensureNodeCard(n.node_id);
+      el.querySelector('.node-id').textContent = n.node_id;
+
+      const style = STATE_STYLES[n.state] || STATE_STYLES.follower;
+      const badge = el.querySelector('.state-badge');
+      badge.className = `state-badge ${style.badge}`;
+      badge.textContent = n.state;
+
+      // Card border glow for leader
+      el.className = el.className.replace('node-card-leader', '').trim();
+      if (style.card) el.className += ' ' + style.card;
+
+      const bat = n.battery ?? 0;
+      el.querySelector('.battery-pct').textContent = `${bat}%`;
+      const bar = el.querySelector('.battery-bar');
+      bar.style.width = `${bat}%`;
+      bar.style.backgroundColor = batteryColor(bat);
+
+      el.querySelector('.term').textContent = String(n.term ?? 0);
+      el.querySelector('.log-length').textContent = String(n.log_length ?? 0);
+      el.querySelector('.commit-index').textContent = String(n.commit_index ?? 0);
+      el.querySelector('.msgs').textContent = String((n.messages_sent ?? 0) + (n.messages_received ?? 0));
+      const lc = n.leader_changes ?? 0;
+      el.querySelector('.leader-changes').textContent = lc > 0 ? `${lc}×` : '0';
+
+      const leavesRow = el.querySelector('.leaves-row');
+      const leaves = n.leaves || [];
+      if (leaves.length) {
+        leavesRow.innerHTML = leaves.map(l =>
+          `<span class="inline-block font-mono text-[9px] px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-500">${l}</span>`
+        ).join('');
+      } else {
+        leavesRow.innerHTML = '';
+      }
+    }
+
+    function markNodeDirty(nodeId) {
+      dirtyNodeIds.add(nodeId);
+      if (!renderScheduled) {
+        renderScheduled = true;
+        requestAnimationFrame(() => {
+          renderScheduled = false;
+          for (const id of dirtyNodeIds) {
+            const n = nodes[id];
+            if (n) updateNodeCard(n);
+          }
+          dirtyNodeIds.clear();
+          updateClusterStats();
+        });
+      }
     }
 
     function renderNodes() {
-      const grid = document.getElementById('node-grid');
-      grid.innerHTML = '';
       const sorted = Object.values(nodes).sort((a, b) => a.node_id.localeCompare(b.node_id));
-      for (const n of sorted) {
-        const stateClass = STATE_COLORS[n.state] || STATE_COLORS.follower;
-        const bat = n.battery ?? 0;
-        grid.innerHTML += `
-          <div class="bg-gray-900 rounded-xl p-4 border border-gray-800 space-y-3">
-            <div class="flex items-center justify-between">
-              <span class="font-mono font-bold text-sm">${n.node_id}</span>
-              <span class="state-badge border ${stateClass}">${n.state}</span>
-            </div>
-            <div>
-              <div class="flex justify-between text-xs text-gray-500 mb-1">
-                <span>Battery</span><span>${bat}%</span>
-              </div>
-              <div class="w-full bg-gray-800 rounded-full h-2">
-                <div class="battery-bar ${batteryColor(bat)} h-2 rounded-full" style="width:${bat}%"></div>
-              </div>
-            </div>
-            <div class="grid grid-cols-2 gap-2 text-xs">
-              <div><span class="text-gray-500">Term</span> <span class="ml-1 font-mono">${n.term ?? 0}</span></div>
-              <div><span class="text-gray-500">Log</span> <span class="ml-1 font-mono">${n.log_length ?? 0}</span></div>
-              <div><span class="text-gray-500">Commit</span> <span class="ml-1 font-mono">${n.commit_index ?? 0}</span></div>
-              <div><span class="text-gray-500">Msgs</span> <span class="ml-1 font-mono">${(n.messages_sent ?? 0) + (n.messages_received ?? 0)}</span></div>
-            </div>
-          </div>`;
-      }
+      for (const n of sorted) updateNodeCard(n);
     }
 
     function updateClusterStats() {
@@ -396,48 +679,50 @@
       const lid = leader ? leader.node_id : null;
       if (lid !== prevLeaderId) {
         if (prevLeaderId !== null || (prevLeaderId === null && lid !== null && all.length)) {
-          pushTimeline(lid ? `Leader → ${lid}` : 'No leader');
+          pushTimeline(lid
+            ? `Leader → <span class="text-emerald-400">${lid}</span>`
+            : '<span class="text-red-400">No leader</span>');
         }
         prevLeaderId = lid;
       }
       document.getElementById('stat-leader').textContent = leader ? leader.node_id : '—';
-      document.getElementById('stat-term').textContent = leader ? leader.term : (all.length ? Math.max(...all.map(n => n.term || 0)) : 0);
+      document.getElementById('stat-term').textContent =
+        leader ? leader.term : (all.length ? Math.max(...all.map(n => n.term || 0)) : 0);
       document.getElementById('stat-nodes').textContent = all.length;
       const leafCount = all.reduce((s, n) => s + (n.leaves ? n.leaves.length : 0), 0);
       document.getElementById('stat-leaves').textContent = leafCount;
       const mc = all.length ? Math.max(...all.map(n => n.commit_index ?? 0)) : 0;
       document.getElementById('stat-max-commit').textContent = mc;
       if (mc > prevMaxCommit) {
-        pushTimeline(`Commit index → ${mc}`);
+        pushTimeline(`Commit index → <span class="text-sky-400">${mc}</span>`);
         prevMaxCommit = mc;
       }
     }
 
-    // =====================================================
-    // Message log table
-    // =====================================================
+    // ═══════════════════════════════════════════
+    // Message table
+    // ═══════════════════════════════════════════
     function renderMessages() {
       const tbody = document.getElementById('msg-tbody');
-      tbody.innerHTML = '';
       let list = msgLog.slice(0, 80);
-      if (msgFilter !== 'all') {
-        list = list.filter((m) => msgTypeBucket(m) === msgFilter);
-      }
-      for (const m of list.slice(0, 50)) {
+      if (msgFilter !== 'all') list = list.filter((m) => msgTypeBucket(m) === msgFilter);
+      tbody.innerHTML = list.slice(0, 50).map((m) => {
         const t = new Date(m.timestamp * 1000).toLocaleTimeString();
-        const payloadStr = JSON.stringify(m.payload || {}).slice(0, 80);
-        tbody.innerHTML += `<tr class="border-b border-gray-800/50">
-          <td class="py-1 pr-4 text-gray-500">${t}</td>
-          <td class="py-1 pr-4">${m.sender_id || '?'}</td>
-          <td class="py-1 pr-4 text-sky-400">${m.msg_type || '?'}</td>
-          <td class="py-1 text-gray-400 truncate max-w-xs">${payloadStr}</td>
+        const payload = JSON.stringify(m.payload || {}).slice(0, 80);
+        const typeColor = m.msg_type === 'liveness_ping' ? 'text-emerald-500/70'
+          : m.msg_type === 'demo_control' ? 'text-amber-400/80' : 'text-sky-400/80';
+        return `<tr class="hover:bg-zinc-800/30 transition-colors">
+          <td class="py-1.5 px-5 text-zinc-600">${t}</td>
+          <td class="py-1.5 pr-5 text-zinc-300">${m.sender_id || '?'}</td>
+          <td class="py-1.5 pr-5 ${typeColor}">${m.msg_type || '?'}</td>
+          <td class="py-1.5 pr-5 text-zinc-500 truncate max-w-[180px]">${payload}</td>
         </tr>`;
-      }
+      }).join('');
     }
 
-    // =====================================================
+    // ═══════════════════════════════════════════
     // Traffic chart
-    // =====================================================
+    // ═══════════════════════════════════════════
     const trafficCtx = document.getElementById('traffic-chart').getContext('2d');
     const trafficChart = new Chart(trafficCtx, {
       type: 'line',
@@ -446,19 +731,24 @@
         datasets: [{
           label: 'Messages / sec',
           data: Array(TRAFFIC_WINDOW).fill(0),
-          borderColor: '#34d399',
-          backgroundColor: 'rgba(52,211,153,0.1)',
-          fill: true, tension: 0.3, pointRadius: 0,
+          borderColor: '#10b981',
+          backgroundColor: 'rgba(16,185,129,0.06)',
+          fill: true, tension: 0.4, pointRadius: 0, borderWidth: 1.5,
         }],
       },
       options: {
         responsive: true,
         scales: {
           x: { display: false },
-          y: { beginAtZero: true, grid: { color: '#1f2937' }, ticks: { color: '#6b7280' } },
+          y: {
+            beginAtZero: true,
+            grid: { color: 'rgba(63,63,70,0.4)' },
+            ticks: { color: '#52525b', font: { family: '"Geist Mono"', size: 10 } },
+            border: { display: false },
+          },
         },
         plugins: { legend: { display: false } },
-        animation: { duration: 300 },
+        animation: { duration: 200 },
       },
     });
 
@@ -471,19 +761,37 @@
       trafficCount = 0;
     }, 1000);
 
-    // =====================================================
+    // ═══════════════════════════════════════════
     // Battery chart
-    // =====================================================
+    // ═══════════════════════════════════════════
     const batteryCtx = document.getElementById('battery-chart').getContext('2d');
     const batteryChart = new Chart(batteryCtx, {
       type: 'bar',
-      data: { labels: [], datasets: [{ label: 'Battery %', data: [], backgroundColor: [] }] },
+      data: {
+        labels: [],
+        datasets: [{
+          label: 'Battery %',
+          data: [],
+          backgroundColor: [],
+          borderRadius: 4,
+          borderSkipped: false,
+        }],
+      },
       options: {
         responsive: true,
         indexAxis: 'y',
         scales: {
-          x: { min: 0, max: 100, grid: { color: '#1f2937' }, ticks: { color: '#6b7280' } },
-          y: { grid: { display: false }, ticks: { color: '#d1d5db', font: { family: 'monospace' } } },
+          x: {
+            min: 0, max: 100,
+            grid: { color: 'rgba(63,63,70,0.4)' },
+            ticks: { color: '#52525b', font: { family: '"Geist Mono"', size: 10 } },
+            border: { display: false },
+          },
+          y: {
+            grid: { display: false },
+            ticks: { color: '#a1a1aa', font: { family: '"Geist Mono"', size: 10 } },
+            border: { display: false },
+          },
         },
         plugins: { legend: { display: false } },
         animation: { duration: 300 },
@@ -494,18 +802,13 @@
       const sorted = Object.values(nodes).sort((a, b) => a.node_id.localeCompare(b.node_id));
       batteryChart.data.labels = sorted.map(n => n.node_id);
       batteryChart.data.datasets[0].data = sorted.map(n => n.battery ?? 0);
-      batteryChart.data.datasets[0].backgroundColor = sorted.map(n => {
-        const b = n.battery ?? 0;
-        if (b > 50) return '#34d399';
-        if (b > 25) return '#fbbf24';
-        return '#ef4444';
-      });
+      batteryChart.data.datasets[0].backgroundColor = sorted.map(n => batteryColor(n.battery ?? 0));
       batteryChart.update('none');
     }, 2000);
 
-    // =====================================================
+    // ═══════════════════════════════════════════
     // Initial fetch
-    // =====================================================
+    // ═══════════════════════════════════════════
     fetch('/api/nodes').then(r => r.json()).then(list => {
       for (const n of list) {
         nodes[n.node_id] = n;
@@ -513,9 +816,7 @@
       }
       const leader = list.find(n => n.state === 'leader');
       prevLeaderId = leader ? leader.node_id : null;
-      if (list.length) {
-        prevMaxCommit = Math.max(...list.map(n => n.commit_index ?? 0));
-      }
+      if (list.length) prevMaxCommit = Math.max(...list.map(n => n.commit_index ?? 0));
       renderNodes();
       updateClusterStats();
     });

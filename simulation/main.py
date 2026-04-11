@@ -46,6 +46,7 @@ async def run_scenario(
     async def side_effects() -> None:
         start = time.monotonic()
         tick = 0.1  # seconds between housekeeping ticks
+        last_leader: str | None = None
         while True:
             await asyncio.sleep(tick)
             elapsed = time.monotonic() - start
@@ -61,17 +62,34 @@ async def run_scenario(
             for node in cluster.nodes.values():
                 collector.snapshot_energy(node.node_id, node.battery)
 
-            if partition_at and elapsed >= partition_at and cluster.message_bus._partitions == []:
+            if (
+                partition_at is not None
+                and elapsed >= partition_at
+                and cluster.message_bus._partitions == []
+            ):
                 ids = list(cluster.nodes.keys())
                 mid = len(ids) // 2
                 cluster.inject_partition(ids[:mid], ids[mid:])
 
-            if heal_at and elapsed >= heal_at and cluster.message_bus._partitions:
+            if (
+                heal_at is not None
+                and elapsed >= heal_at
+                and cluster.message_bus._partitions
+            ):
                 cluster.heal_partition()
 
-            for node in cluster.nodes.values():
-                if getattr(node, "state", None) == NodeState.LEADER:
-                    collector.record_leader_change(node.node_id)
+            leader_id = next(
+                (
+                    n.node_id
+                    for n in cluster.nodes.values()
+                    if getattr(n, "state", None) == NodeState.LEADER
+                ),
+                None,
+            )
+            if leader_id != last_leader:
+                if leader_id is not None:
+                    collector.record_leader_change(leader_id)
+                last_leader = leader_id
 
             if elapsed >= duration:
                 break

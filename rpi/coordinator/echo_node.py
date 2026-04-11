@@ -136,6 +136,11 @@ class EchoCoordinator:
         self.leader_changes: int = 0
 
         self._running = False
+        # Messages arrive on the MQTT client's background thread. We enqueue
+        # them into the asyncio loop and handle them in-order on the coordinator
+        # task to avoid racy state mutations.
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._inbox: asyncio.Queue[tuple[str, str, dict]] | None = None
 
     # ================================================================ timers
 
@@ -168,6 +173,8 @@ class EchoCoordinator:
     async def run(self) -> None:
         """Start the coordinator event loop."""
         self._running = True
+        self._loop = asyncio.get_running_loop()
+        self._inbox = asyncio.Queue()
         self.transport.set_handler(self._dispatch)
         logger.info(
             "%s starting as %s (battery=%d%%)",
@@ -175,6 +182,7 @@ class EchoCoordinator:
         )
 
         while self._running:
+            self._drain_inbox()
             self._check_battery()
             self._tick()
             self._publish_status()
@@ -251,23 +259,42 @@ class EchoCoordinator:
 
     def _dispatch(self, sender: str, msg_type: str, payload: dict) -> None:
         """Called from the MQTT thread for every inbound message."""
-        self.total_messages_received += 1
+        loop = self._loop
+        inbox = self._inbox
+        if loop is None or inbox is None:
+            return
+        loop.call_soon_threadsafe(inbox.put_nowait, (sender, msg_type, payload))
 
-        _HANDLERS = {
-            "request_vote": self._handle_request_vote,
-            "vote_response": self._handle_vote_response,
-            "append_entries": self._handle_append_entries,
-            "append_response": self._handle_append_entries_response,
-            "liveness_ping": self._handle_liveness_ping,
-            "leaf_register": self._handle_leaf_register,
-            "sensor_data": self._handle_sensor_data,
-            "demo_control": self._handle_demo_control,
-        }
-        handler = _HANDLERS.get(msg_type)
-        if handler:
-            handler(sender, payload)
-        else:
-            logger.warning("%s received unknown msg_type=%s", self.node_id, msg_type)
+    def _drain_inbox(self) -> None:
+        """Process all queued inbound MQTT messages (asyncio task thread)."""
+        inbox = self._inbox
+        if inbox is None:
+            return
+        while True:
+            try:
+                sender, msg_type, payload = inbox.get_nowait()
+            except asyncio.QueueEmpty:
+                return
+
+            self.total_messages_received += 1
+
+            _HANDLERS = {
+                "request_vote": self._handle_request_vote,
+                "vote_response": self._handle_vote_response,
+                "append_entries": self._handle_append_entries,
+                "append_response": self._handle_append_entries_response,
+                "liveness_ping": self._handle_liveness_ping,
+                "leaf_register": self._handle_leaf_register,
+                "sensor_data": self._handle_sensor_data,
+                "demo_control": self._handle_demo_control,
+            }
+            handler = _HANDLERS.get(msg_type)
+            if handler:
+                handler(sender, payload)
+            else:
+                logger.warning(
+                    "%s received unknown msg_type=%s", self.node_id, msg_type
+                )
 
     # ======================================================== RequestVote
 
