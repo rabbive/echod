@@ -39,3 +39,4 @@ This is a pure-Python asyncio simulation comparing ECHO and Raft consensus proto
 
 - On PEP 668–managed system Python (common on macOS), run the hardware-free demo with a project venv: `python3 -m venv .venv`, `.venv/bin/pip install -r rpi/requirements.txt`, then `PATH="$(pwd)/.venv/bin:$PATH" bash scripts/demo.sh` so `python3` and dependencies resolve.
 - For roughly the first minute after `scripts/demo.sh` starts, the dashboard may update often while coordinators finish leader election and leaves register or re-register; this usually settles once the cluster reaches steady state.
+- The Phase 2 Flask dashboard template (`rpi/dashboard/templates/index.html`) uses Tailwind CDN, Geist Sans and Geist Mono from Fontsource, Chart.js, and Socket.IO for live cluster state.
