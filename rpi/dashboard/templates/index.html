@@ -252,7 +252,7 @@
           <!-- Drain -->
           <div class="space-y-3">
             <label class="text-[10px] font-semibold text-zinc-500 uppercase tracking-widest block">Drain Rate %/s</label>
-            <input type="number" id="demo-drain-rate" min="0" step="0.1" value="0.5"
+            <input type="number" id="demo-drain-rate" min="0" step="0.01" value="0.02"
               class="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-3 py-2 font-mono text-sm
                 text-zinc-200 focus:outline-none focus:border-zinc-500 transition-colors" />
             <button type="button" id="demo-apply-drain"
@@ -399,18 +399,28 @@
       demoChevron.style.transform = open ? 'rotate(0deg)' : 'rotate(180deg)';
     });
 
-    // ─── Timeline ───────────────────────────
-    function pushTimeline(text) {
-      const t = new Date().toLocaleTimeString();
-      eventTimeline.unshift({ t, text });
-      if (eventTimeline.length > 40) eventTimeline.length = 40;
+    // ─── Timeline (throttled render to avoid UI jank) ─────────────────
+    let _timelineRenderScheduled = false;
+    function _renderTimeline() {
       const ul = document.getElementById('event-timeline');
+      if (!ul) return;
       ul.innerHTML = eventTimeline.map((e) =>
         `<li class="flex items-baseline gap-2 px-4 py-1.5 hover:bg-zinc-800/30 transition-colors">
           <span class="text-zinc-700 shrink-0">${e.t}</span>
           <span class="text-zinc-400">${e.text}</span>
         </li>`
       ).join('');
+    }
+    function pushTimeline(text) {
+      const t = new Date().toLocaleTimeString();
+      eventTimeline.unshift({ t, text });
+      if (eventTimeline.length > 40) eventTimeline.length = 40;
+      if (_timelineRenderScheduled) return;
+      _timelineRenderScheduled = true;
+      requestAnimationFrame(() => {
+        _timelineRenderScheduled = false;
+        _renderTimeline();
+      });
     }
 
     function msgTypeBucket(m) {
@@ -465,7 +475,7 @@
 
     document.getElementById('msg-filter').addEventListener('change', (ev) => {
       msgFilter = ev.target.value;
-      renderMessages();
+      scheduleMessagesRender();
     });
 
     async function demoPost(url, body) {
@@ -533,10 +543,11 @@
     socket.on('broadcast_msg', (data) => {
       msgLog.unshift(data);
       if (msgLog.length > 200) msgLog.length = 200;
-      renderMessages();
+      scheduleMessagesRender();
       bumpTraffic();
       _totalMsgCount++;
-      document.getElementById('total-msgs-display').textContent = _totalMsgCount.toLocaleString();
+      const totalEl = document.getElementById('total-msgs-display');
+      if (totalEl) totalEl.textContent = _totalMsgCount.toLocaleString();
     });
 
     // ═══════════════════════════════════════════
@@ -702,8 +713,19 @@
     // ═══════════════════════════════════════════
     // Message table
     // ═══════════════════════════════════════════
+    let _messagesRenderScheduled = false;
+    function scheduleMessagesRender() {
+      if (_messagesRenderScheduled) return;
+      _messagesRenderScheduled = true;
+      requestAnimationFrame(() => {
+        _messagesRenderScheduled = false;
+        renderMessages();
+      });
+    }
+
     function renderMessages() {
       const tbody = document.getElementById('msg-tbody');
+      if (!tbody) return;
       let list = msgLog.slice(0, 80);
       if (msgFilter !== 'all') list = list.filter((m) => msgTypeBucket(m) === msgFilter);
       tbody.innerHTML = list.slice(0, 50).map((m) => {

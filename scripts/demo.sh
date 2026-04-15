@@ -42,6 +42,11 @@ if [ "${1:-}" = "stop" ]; then
         done < "$PIDS_FILE"
         rm "$PIDS_FILE"
     fi
+    # Best-effort cleanup in case a previous run didn't record PIDs
+    # Match any Python executable (python, python3, Python.app, venv python, etc.)
+    pkill -f " -m rpi.coordinator.echo_node" 2>/dev/null || true
+    pkill -f " -m rpi.mock_leaf" 2>/dev/null || true
+    pkill -f " -m rpi.dashboard.app" 2>/dev/null || true
     # also kill any mosquitto we started
     pkill -f "mosquitto -p 1883" 2>/dev/null || true
     echo "Done."

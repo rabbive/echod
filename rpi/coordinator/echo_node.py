@@ -363,6 +363,11 @@ class EchoCoordinator:
             NodeState.CANDIDATE, NodeState.LEADER, NodeState.LOCAL_LEADER,
         ):
             self.state = NodeState.FOLLOWER
+        # Avoid immediate re-election churn after learning about a newer term.
+        # In the MQTT demo environment, scheduling jitter can otherwise cause
+        # followers to time out immediately and start a new election.
+        if self.state != NodeState.OBSERVER:
+            self._reset_election_timer()
 
     # ====================================================== AppendEntries
 

@@ -18,9 +18,14 @@ CLUSTER_ID: str = os.getenv("ECHO_CLUSTER_ID", "echo-default")
 # ---------------------------------------------------------------------------
 # Timing (seconds)
 # ---------------------------------------------------------------------------
-ELECTION_TIMEOUT_MIN: float = 0.150
-ELECTION_TIMEOUT_MAX: float = 0.300
-LIVENESS_PING_INTERVAL: float = 0.050
+#
+# Note: Phase 2 runs over MQTT + Python threads/event-loop scheduling, which is
+# far noisier than the in-process simulation. If election timeouts are too
+# small, coordinators will spuriously start elections due to transient broker /
+# scheduler jitter. Use larger defaults here for a stable live demo.
+ELECTION_TIMEOUT_MIN: float = 1.2
+ELECTION_TIMEOUT_MAX: float = 2.4
+LIVENESS_PING_INTERVAL: float = 0.25
 PARTITION_TIMEOUT: float = 2.0
 
 # ---------------------------------------------------------------------------
@@ -45,4 +50,6 @@ DASHBOARD_PORT: int = int(os.getenv("ECHO_DASHBOARD_PORT", "5000"))
 # ---------------------------------------------------------------------------
 # Mock battery (used when --mock is passed)
 # ---------------------------------------------------------------------------
-MOCK_BATTERY_DRAIN_RATE: float = 0.5  # % per second
+# Keep the default drain low so the Phase 2 demo stays stable for a live
+# presentation. You can still dial this up from the dashboard demo controls.
+MOCK_BATTERY_DRAIN_RATE: float = 0.02  # % per second
