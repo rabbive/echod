@@ -47,6 +47,9 @@ class MetricsCollector:
     leader_changes: int = 0
     _last_leader: str | None = field(default=None, repr=False)
 
+    # Per-payload-type message counts (e.g. AppendEntriesRPC, LivenessPing)
+    messages_by_type: dict[str, int] = field(default_factory=dict)
+
     # Energy snapshots: node_id -> list of battery readings
     energy_snapshots: dict[str, list[float]] = field(default_factory=dict)
 
@@ -61,6 +64,8 @@ class MetricsCollector:
         self.total_messages += 1
 
         payload = msg.payload
+        type_name = type(payload).__name__
+        self.messages_by_type[type_name] = self.messages_by_type.get(type_name, 0) + 1
         if self._active_round is not None:
             self._active_round.messages += 1
 
@@ -138,6 +143,7 @@ class MetricsCollector:
         """Return a dict summarising all metrics."""
         return {
             "total_messages": self.total_messages,
+            "messages_by_type": dict(sorted(self.messages_by_type.items())),
             "consensus_rounds": len(self.rounds),
             "avg_consensus_latency_ms": round(self.avg_consensus_latency_ms, 3),
             "avg_messages_per_round": round(self.avg_messages_per_round, 1),

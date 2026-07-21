@@ -11,7 +11,14 @@ import logging
 import time
 from typing import Any, Callable
 
-from simulation.core.messages import Message
+from simulation.core.config import (
+    DRAIN_MULT_CANDIDATE,
+    DRAIN_MULT_FOLLOWER,
+    DRAIN_MULT_LEADER,
+    DRAIN_MULT_LEAF,
+    DRAIN_MULT_OBSERVER,
+)
+from simulation.core.messages import Message, NodeState
 from simulation.core.node import Node
 
 logger = logging.getLogger(__name__)
@@ -175,3 +182,26 @@ class Cluster:
         """Drain battery on every node by *delta*."""
         for node in self.nodes.values():
             node.tick_battery(delta)
+
+    def tick_batteries_weighted(self, base_delta: float) -> None:
+        """Drain battery proportional to each node's current role.
+
+        Leaders do the most work (pings, replication), candidates are
+        mid-election, observers are nearly idle, and leaves only sense
+        and report — so their idle drain differs accordingly.
+        """
+        for node in self.nodes.values():
+            if node.tier != "coordinator":
+                node.tick_battery(base_delta * DRAIN_MULT_LEAF)
+                continue
+
+            state = node.state
+            if state in (NodeState.LEADER, NodeState.LOCAL_LEADER):
+                mult = DRAIN_MULT_LEADER
+            elif state == NodeState.CANDIDATE:
+                mult = DRAIN_MULT_CANDIDATE
+            elif state == NodeState.OBSERVER:
+                mult = DRAIN_MULT_OBSERVER
+            else:
+                mult = DRAIN_MULT_FOLLOWER
+            node.tick_battery(base_delta * mult)

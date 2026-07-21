@@ -107,11 +107,17 @@ class AppendEntriesRPC:
 
 @dataclass(frozen=True)
 class AppendEntriesResponse:
-    """Reply to an AppendEntriesRPC."""
+    """Reply to an AppendEntriesRPC.
+
+    responder_battery lets the leader track peer energy levels (used by
+    echoD to pick a handoff successor).  Defaults to 0 for backwards
+    compatibility with senders that do not report it.
+    """
     term: int
     success: bool
     responder_id: str
     match_index: int = 0
+    responder_battery: int = 0  # 0-100
 
 
 # ---------------------------------------------------------------------------
@@ -123,6 +129,22 @@ class LivenessPing:
     """Lightweight ping sent between consensus rounds to confirm leader health.
 
     Designed to be ~32 bytes on the wire — carries no log data.
+    """
+    term: int
+    leader_id: str
+    timestamp: float = field(default_factory=time.time)
+
+
+# ---------------------------------------------------------------------------
+# Leadership handoff (echoD — TimeoutNow-style directed succession)
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class LeadershipHandoff:
+    """Sent by a draining leader to a chosen successor.
+
+    The recipient starts an election immediately, avoiding the availability
+    gap and message cost of a full randomized election.
     """
     term: int
     leader_id: str

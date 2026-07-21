@@ -16,6 +16,7 @@ from simulation.core.log import ReplicatedLog
 from simulation.core.messages import (
     AppendEntriesRPC,
     AppendEntriesResponse,
+    LeadershipHandoff,
     LeafRegisterRequest,
     LeafRegisterResponse,
     LeafState,
@@ -66,6 +67,15 @@ class Node:
         self._running = False
 
     # ------------------------------------------------------------------ run
+    def _wakeup_interval(self) -> float:
+        """Max seconds to block on the inbox before an idle tick.
+
+        Subclasses override to wake precisely at their next scheduled
+        deadline (election timeout, batch window, ping interval) rather
+        than at the coarse default poll quantum.
+        """
+        return 0.05
+
     async def run(self) -> None:
         """Main event loop — consume messages from the inbox."""
         self._running = True
@@ -74,7 +84,7 @@ class Node:
             while self._running:
                 try:
                     msg: Message = await asyncio.wait_for(
-                        self._inbox.get(), timeout=0.05,
+                        self._inbox.get(), timeout=self._wakeup_interval(),
                     )
                     await self.handle_message(msg)
                 except asyncio.TimeoutError:
@@ -129,6 +139,8 @@ class Node:
             await self.handle_append_entries_response(msg.sender_id, payload)
         elif isinstance(payload, LivenessPing):
             await self.handle_liveness_ping(msg.sender_id, payload)
+        elif isinstance(payload, LeadershipHandoff):
+            await self.handle_leadership_handoff(msg.sender_id, payload)
         elif isinstance(payload, LeafRegisterRequest):
             await self.handle_leaf_register(msg.sender_id, payload)
         elif isinstance(payload, LeafRegisterResponse):
@@ -154,6 +166,9 @@ class Node:
 
     async def handle_liveness_ping(self, sender: str, ping: LivenessPing) -> None:
         """Handle a lightweight liveness ping from the leader."""
+
+    async def handle_leadership_handoff(self, sender: str, handoff: LeadershipHandoff) -> None:
+        """Handle a directed leadership handoff (echoD)."""
 
     async def handle_leaf_register(self, sender: str, req: LeafRegisterRequest) -> None:
         """Handle a leaf node's registration request (coordinator side)."""

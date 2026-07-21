@@ -35,12 +35,17 @@ class LeafNode(Node):
         node_id: str,
         sensor_type: str = "temperature",
         battery: float = 1.0,
+        auto_report: bool = True,
     ) -> None:
         super().__init__(node_id, tier="leaf", battery=battery)
         self.state = LeafState.UNREGISTERED
 
         self.sensor_type = sensor_type
         self.coordinator_id: str | None = None
+
+        # When False the leaf only reports readings injected by the
+        # workload generator (deterministic cross-protocol comparison).
+        self.auto_report = auto_report
 
         # Timing
         self._last_coordinator_contact: float = time.monotonic()
@@ -65,7 +70,10 @@ class LeafNode(Node):
                 self.coordinator_id = None
                 return
 
-            if now - self._last_sample_time >= SAMPLE_INTERVAL / 1000.0:
+            if (
+                self.auto_report
+                and now - self._last_sample_time >= SAMPLE_INTERVAL / 1000.0
+            ):
                 await self._report_sensor()
                 self._last_sample_time = now
 
@@ -102,18 +110,31 @@ class LeafNode(Node):
 
     # ------------------------------------------------------- sensor data
     async def _report_sensor(self) -> None:
-        """Send a sensor reading to the registered coordinator."""
+        """Sample the (simulated) sensor and send the reading."""
+        self._sensor_value += random.uniform(-0.5, 0.5)
+        await self._send_reading(self._sensor_value)
+
+    async def _send_reading(self, value: float) -> None:
+        """Transmit a reading to the registered coordinator.
+
+        Split out from _report_sensor so subclasses (echoD) can apply
+        edge-side filtering and the workload generator can inject exact
+        values through the normal path.
+        """
         if self.coordinator_id is None:
             return
-
-        self._sensor_value += random.uniform(-0.5, 0.5)
 
         report = SensorDataReport(
             leaf_id=self.node_id,
             sensor_type=self.sensor_type,
-            value=self._sensor_value,
+            value=value,
         )
         await self.send(self.coordinator_id, report)
+
+    async def inject_reading(self, value: float) -> None:
+        """Workload-generator hook: report an exact reading (no jitter)."""
+        self._sensor_value = value
+        await self._send_reading(value)
 
     # ---------------------------------------------------- incoming RPCs
     async def handle_append_entries(self, sender: str, rpc: AppendEntriesRPC) -> None:

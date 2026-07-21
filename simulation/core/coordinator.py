@@ -67,7 +67,27 @@ class CoordinatorNode(Node):
         # Partition epoch (non-zero in provisional mode)
         self.partition_epoch: int = 0
 
+        # Most recently observed leader (from AppendEntries / pings) —
+        # followers forward sensor reports here.
+        self._current_leader_id: str | None = None
+
+        # Peer battery levels as reported in AppendEntriesResponses
+        self._peer_batteries: dict[str, int] = {}
+
     # ---------------------------------------------------------------- timers
+    def _wakeup_interval(self) -> float:
+        """Wake exactly at the election deadline instead of the poll quantum.
+
+        Without this, deadlines separated by less than the 50 ms poll
+        quantum are observed at the same tick, causing lockstep split
+        votes.  Leaders/observers keep the default quantum.
+        """
+        base = super()._wakeup_interval()
+        if self.state in (NodeState.LEADER, NodeState.LOCAL_LEADER, NodeState.OBSERVER):
+            return base
+        remaining = self._election_deadline - time.monotonic()
+        return max(0.001, min(base, remaining))
+
     def _new_election_deadline(self) -> float:
         timeout_s = random.randint(ELECTION_TIMEOUT_MIN, ELECTION_TIMEOUT_MAX) / 1000.0
         return time.monotonic() + timeout_s
@@ -204,10 +224,12 @@ class CoordinatorNode(Node):
             await self.send(sender, AppendEntriesResponse(
                 term=self.current_term, success=False,
                 responder_id=self.node_id,
+                responder_battery=int(self.battery * 100),
             ))
             return
 
         self.reset_election_timer()
+        self._current_leader_id = rpc.leader_id
         if self.state == NodeState.CANDIDATE:
             self.state = NodeState.FOLLOWER
 
@@ -218,6 +240,7 @@ class CoordinatorNode(Node):
                 await self.send(sender, AppendEntriesResponse(
                     term=self.current_term, success=False,
                     responder_id=self.node_id,
+                    responder_battery=int(self.battery * 100),
                 ))
                 return
 
@@ -238,6 +261,7 @@ class CoordinatorNode(Node):
             success=True,
             responder_id=self.node_id,
             match_index=self.log.last_index,
+            responder_battery=int(self.battery * 100),
         ))
 
     async def handle_append_entries_response(self, sender: str, resp: AppendEntriesResponse) -> None:
@@ -245,6 +269,9 @@ class CoordinatorNode(Node):
         if resp.term > self.current_term:
             self.step_down(resp.term)
             return
+
+        if resp.responder_battery:
+            self._peer_batteries[sender] = resp.responder_battery
 
         if self.state != NodeState.LEADER:
             return
@@ -326,6 +353,7 @@ class CoordinatorNode(Node):
         if ping.term >= self.current_term:
             if ping.term > self.current_term:
                 self.step_down(ping.term)
+            self._current_leader_id = ping.leader_id
             self.reset_election_timer()
 
     # ---------------------------------------------------- leaf management

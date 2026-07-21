@@ -26,6 +26,7 @@ from simulation.core.messages import (
     NodeState,
     RequestVoteRPC,
     RequestVoteResponse,
+    SensorDataReport,
     TriggerType,
 )
 
@@ -100,6 +101,20 @@ class EchoCoordinator(CoordinatorNode):
 
         if self._has_majority():
             await self._become_leader()
+
+    async def handle_sensor_data(self, sender: str, report: SensorDataReport) -> None:
+        """Forward reports to the leader when this node is a follower.
+
+        In ECHO a leaf registers with an arbitrary coordinator, but only
+        the leader may propose.  Rather than silently dropping reports,
+        followers relay them to the most recently observed leader.
+        """
+        if self.state in (NodeState.LEADER, NodeState.LOCAL_LEADER):
+            await super().handle_sensor_data(sender, report)
+            return
+
+        if self._current_leader_id is not None and self._current_leader_id != self.node_id:
+            await self.send(self._current_leader_id, report)
 
     # ----- Event-driven consensus triggers -----
 
@@ -210,6 +225,7 @@ class EchoLeaf(LeafNode):
 def build_echo_cluster(
     coordinator_count: int = 5,
     leaf_count: int = 10,
+    auto_report: bool = True,
 ) -> Cluster:
     """Create a Cluster with ECHO coordinators and leaf nodes."""
     cluster = Cluster()
@@ -219,7 +235,7 @@ def build_echo_cluster(
         cluster.add_node(node)
 
     for i in range(leaf_count):
-        node = EchoLeaf(node_id=f"leaf-{i}")
+        node = EchoLeaf(node_id=f"leaf-{i}", auto_report=auto_report)
         cluster.add_node(node)
 
     return cluster
