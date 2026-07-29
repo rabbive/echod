@@ -27,7 +27,9 @@ for HOST in "$@"; do
     echo "  Deployed.  To start a coordinator on $HOST:"
     echo "    cd $REMOTE_DIR"
     echo "    python -m rpi.coordinator.echo_node \\"
-    echo "        --node-id coord-X --peers coord-0,coord-1,... --broker <BROKER_IP>"
+    echo "        --node-id coord-X --peers coord-0,coord-1,... \\"
+    echo "        --protocol echod --broker <BROKER_IP>"
+    echo "    (--protocol selects raft | echo | echod; default: echo)"
     echo ""
 done
 
