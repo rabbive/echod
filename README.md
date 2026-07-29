@@ -130,7 +130,7 @@ echoD targets deployments where **consensus participants themselves are battery-
 | Phase | Status | Contents |
 |---|---|---|
 | **1 — Simulation** | ✅ Complete | Raft / ECHO / echoD asyncio simulation, seeded workload harness, metrics + charts, 46 protocol tests |
-| **2 — Real hardware (RPi)** | ✅ ECHO running | Coordinators + mock leaves over MQTT, Flask dashboard, hardware-free demo script. echoD port: ~120 lines (see `docs/ECHOD_VS_RAFT_ECHO.md`) |
+| **2 — Real hardware (RPi)** | ✅ All three protocols running | One coordinator binary with `--protocol raft\|echo\|echod` over MQTT (same transport/battery/logging for an honest comparison), Flask dashboard, hardware-free demo script, 26 protocol tests |
 | **3 — ESP32 leaves** | Planned | C/ESP-IDF leaf firmware with edge delta filtering |
 
 **Further reading**
@@ -223,6 +223,49 @@ The simulation runs **Raft, ECHO, and echoD** under the same seeded workload, pr
 
 ---
 
+## Step-by-step: run a hardware-transport experiment (metrics harness)
+
+The Phase 2 harness runs a full cluster over **real MQTT transport** with the
+same seeded workload model as the simulation, and writes **sim-compatible
+CSVs** — this is the entry point used both on localhost (mock batteries) and
+on the physical Pi cluster (real batteries, separate hosts).
+
+```bash
+bash scripts/run_experiment.sh --protocol echod --duration 30 --seed 42
+bash scripts/run_experiment.sh --protocol raft  --duration 30 --seed 42 \
+    --partition-at 10 --heal-at 20
+```
+
+- `--protocol raft|echo|echod` (required), `--duration`, `--seed`,
+  `--coordinators`, `--leaves`, `--burst-interval`, `--partition-at` / `--heal-at`
+- Artifacts in `results/hw/<protocol>/<seed>/`: `metrics.csv` (identical
+  schema to the simulation's), `nodes.csv` (per-node TX/RX by type),
+  `timeseries.csv` (battery/state/log over time), `summary.json`.
+- Message accounting matches the simulation's delivery semantics (a
+  broadcast ping costs one delivery per receiving node). Consensus latency
+  is measured leader-side (monotonic clock) so no cross-node clock sync is
+  needed.
+- Partitions are injected via an MQTT-level drop hook
+  (`python3 -m rpi.partition_ctl …`), which mirrors the simulation's
+  message-bus partition and works identically on localhost and across
+  machines. On the Pi cluster you may additionally use `iptables` for a
+  physical split; ECHO/echoD enter provisional mode, Raft's minority halts.
+
+Example 30 s localhost run (5 coordinators + 5 leaves, seed 42):
+
+| Metric | Raft | ECHO | echoD |
+|---|---|---|---|
+| Total messages | 2470 | 1780 | **588** (~3–4× fewer) |
+| Consensus rounds | 140 | 48 | **25** (batched per burst) |
+| Avg consensus latency | 10.4 ms | 8.6 ms | **8.1 ms** |
+| Availability | 95.8 % | 95.1 % | 92.4 % |
+
+echoD's availability gap is the one-time cost of its longer first-election
+timeout (the documented tradeoff); it amortizes as runs get longer, and
+leader handoff avoids *later* gaps entirely.
+
+---
+
 ## Step-by-step: hardware-free MQTT demo (live dashboard)
 
 This starts (when possible) a local Mosquitto broker, five **mock-battery** coordinators, mock leaf nodes, and a **Flask dashboard** with Socket.IO updates.
@@ -254,7 +297,9 @@ This starts (when possible) a local Mosquitto broker, five **mock-battery** coor
 
 **Logs:** `/tmp/echo-coord-*.log`, `/tmp/echo-leaves.log`, `/tmp/echo-dashboard.log`
 
-**Optional environment** (see comments in `scripts/demo.sh`): e.g. `ECHO_DEMO_LOW_BATTERY=1`, `DEMO_BATTERY_BASE=N`, or `ECHO_DEMO=0` on coordinators to disable demo MQTT handlers.
+**Optional environment** (see comments in `scripts/demo.sh`): e.g. `ECHO_PROTOCOL=raft|echo|echod` to pick the consensus protocol the coordinators run (default `echo`; `echod` also turns on edge filtering in the mock leaves), `ECHO_DEMO_LOW_BATTERY=1`, `DEMO_BATTERY_BASE=N`, or `ECHO_DEMO=0` on coordinators to disable demo MQTT handlers.
+
+**Protocol flag:** the Phase 2 coordinator runs all three protocols from one binary — `python3 -m rpi.coordinator.echo_node --protocol raft|echo|echod …` — sharing transport, battery monitoring, and logging so hardware comparisons are honest by construction.
 
 **Strict venv usage on macOS:** If system Python blocks global installs, activate `.venv` and run:
 

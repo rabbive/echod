@@ -3,7 +3,7 @@
 #
 # Starts:
 #   1. A local Mosquitto MQTT broker (if installed)
-#   2. Five ECHO coordinator nodes (mock battery)
+#   2. Five coordinator nodes (mock battery) running the chosen protocol
 #   3. Five mock leaf nodes sending sensor data
 #   4. The real-time Flask dashboard
 #
@@ -12,6 +12,9 @@
 #   bash scripts/demo.sh stop     # kill background processes
 #
 # Optional environment:
+#   ECHO_PROTOCOL=raft|echo|echod — consensus protocol for the coordinators
+#                              (default: echo).  echod also enables edge
+#                              filtering on the mock leaves.
 #   ECHO_DEMO_LOW_BATTERY=1  — start coordinators with mock battery ~12–28%
 #                              so observer / energy gating shows sooner (~30s).
 #   DEMO_BATTERY_BASE=N      — if set (and ECHO_DEMO_LOW_BATTERY unset), each node
@@ -32,6 +35,12 @@ PIDS_FILE="/tmp/echo-demo-pids"
 COORD_COUNT=5
 LEAF_COUNT=5
 DASH_PORT=5000
+PROTOCOL="${ECHO_PROTOCOL:-echo}"
+
+case "$PROTOCOL" in
+    raft|echo|echod) ;;
+    *) echo "ECHO_PROTOCOL must be raft, echo, or echod (got '$PROTOCOL')"; exit 1 ;;
+esac
 
 # ---------------------------------------------------------------- stop
 if [ "${1:-}" = "stop" ]; then
@@ -59,6 +68,7 @@ PYTHON=python3
 
 echo "============================================"
 echo "  ECHO Protocol — Hardware-Free Demo"
+echo "  Protocol: $PROTOCOL"
 echo "============================================"
 echo ""
 
@@ -79,7 +89,7 @@ for i in $(seq 0 $((COORD_COUNT - 1))); do
 done
 
 # ------------------------------------------------------ coordinators
-echo "[2/4] Starting $COORD_COUNT coordinator nodes (mock battery) …"
+echo "[2/4] Starting $COORD_COUNT coordinator nodes (protocol=$PROTOCOL, mock battery) …"
 > "$PIDS_FILE"
 for i in $(seq 0 $((COORD_COUNT - 1))); do
     if [ "${ECHO_DEMO_LOW_BATTERY:-0}" = "1" ]; then
@@ -94,6 +104,7 @@ for i in $(seq 0 $((COORD_COUNT - 1))); do
     $PYTHON -m rpi.coordinator.echo_node \
         --node-id "coord-${i}" \
         --peers "$PEERS" \
+        --protocol "$PROTOCOL" \
         --mock \
         --battery "$BATT" \
         > "/tmp/echo-coord-${i}.log" 2>&1 &
@@ -102,11 +113,17 @@ done
 sleep 2
 
 # -------------------------------------------------------- mock leaves
+# echoD leaves filter at the edge (optimization 1); raft/echo transmit all.
+LEAF_EXTRA_ARGS=""
+if [ "$PROTOCOL" = "echod" ]; then
+    LEAF_EXTRA_ARGS="--edge-filter"
+fi
 echo "[3/4] Starting $LEAF_COUNT mock leaf nodes …"
 $PYTHON -m rpi.mock_leaf \
     --leaves "$LEAF_COUNT" \
     --coordinators "$PEERS" \
     --interval 0.5 \
+    $LEAF_EXTRA_ARGS \
     > /tmp/echo-leaves.log 2>&1 &
 echo $! >> "$PIDS_FILE"
 sleep 1

@@ -14,6 +14,8 @@ This is a pure-Python asyncio simulation comparing Raft, ECHO, and echoD (a Raft
 | Run simulation     | `python3 -m simulation.main`                                           |
 | Run with charts    | `python3 -m simulation.main --charts --output-dir results`             |
 | Run with partition | `python3 -m simulation.main --partition-at 2 --heal-at 4 --duration 5` |
+| Run MQTT experiment | `bash scripts/run_experiment.sh --protocol echod --duration 30 --seed 42` |
+| Inject MQTT partition | `python3 -m rpi.partition_ctl partition --side coord-0,coord-1 --side coord-2,coord-3,coord-4` (then `… heal`) |
 | Regenerate README diagrams | `python3 scripts/generate_diagrams.py` (needs network for SVG rendering via kroki.io; `--no-svg` for offline) |
 
 
@@ -28,9 +30,11 @@ This is a pure-Python asyncio simulation comparing Raft, ECHO, and echoD (a Raft
 ### Phase 2 hardware-free demo (`rpi/`, `scripts/demo.sh`)
 
 - Run `bash scripts/demo.sh`; the dashboard may bind to **5001+** on macOS if **5000** is taken (AirPlay). The script waits until HTTP responds before printing “Demo running”.
+- **One coordinator binary runs all three protocols**: `python3 -m rpi.coordinator.echo_node --protocol raft|echo|echod` (class is still named `EchoCoordinator` for backward compatibility). `ECHO_PROTOCOL=echod bash scripts/demo.sh` runs the whole demo in echoD mode (mock leaves then get `--edge-filter` automatically).
 - Coordinators honor MQTT `**demo_control`** only for **mock** battery unless `**ECHO_DEMO=0`** is set in the environment (disables those handlers).
 - Optional: `**ECHO_DEMO_LOW_BATTERY=1`** or `**DEMO_BATTERY_BASE=N**` when starting the script to tune initial mock battery (see comments in `scripts/demo.sh`).
-- Tests: `pytest simulation/tests/ rpi/tests/ -v`.
+- Tests: `pytest simulation/tests/ rpi/tests/ -v` (includes `rpi/tests/test_protocols.py` — 26 per-protocol behavior tests, and `rpi/tests/test_harness.py` — 16 harness tests).
+- **Experiment harness**: `scripts/run_experiment.sh` orchestrates `rpi/metrics_collector.py` (status/stats subscriber → sim-schema `metrics.csv`, `nodes.csv`, `timeseries.csv`, `summary.json` under `results/hw/<protocol>/<seed>/`), `rpi/mock_leaf.py --workload bursts` (seeded, per-leaf RNG streams — deterministic across protocols), and `rpi/partition_ctl.py` (MQTT-level partition drop hook; coordinators block inbound senders, ECHO/echoD enter provisional mode automatically). Message counting is delivery-side (matches the sim); consensus latency is leader-side monotonic (no NTP needed).
 
 ## Learned User Preferences
 
@@ -42,7 +46,7 @@ This is a pure-Python asyncio simulation comparing Raft, ECHO, and echoD (a Raft
 - On PEP 668–managed system Python (common on macOS), run the hardware-free demo with a project venv: `python3 -m venv .venv`, `.venv/bin/pip install -r rpi/requirements.txt`, then `PATH="$(pwd)/.venv/bin:$PATH" bash scripts/demo.sh` so `python3` and dependencies resolve.
 - For roughly the first minute after `scripts/demo.sh` starts, the dashboard may update often while coordinators finish leader election and leaves register or re-register; this usually settles once the cluster reaches steady state.
 - The Phase 2 Flask dashboard template (`rpi/dashboard/templates/index.html`) uses Tailwind CDN, Geist Sans and Geist Mono from Fontsource, Chart.js, and Socket.IO for live cluster state.
-- Phase 2 stable-demo timing defaults live in `rpi/config.py`: `ELECTION_TIMEOUT_MIN=1.2s`, `ELECTION_TIMEOUT_MAX=2.4s`, `LIVENESS_PING_INTERVAL=0.25s`. Values much smaller than this cause election churn under MQTT + laptop scheduler jitter.
+- Phase 2 stable-demo timing defaults live in `rpi/config.py`: `ELECTION_TIMEOUT_MIN=1.2s`, `ELECTION_TIMEOUT_MAX=2.4s`, `LIVENESS_PING_INTERVAL=0.25s`. Values much smaller than this cause election churn under MQTT + laptop scheduler jitter. echoD mode uses its own longer range (`ECHOD_ELECTION_TIMEOUT_MIN=2.4s`, `MAX=4.8s`, ping cap `ECHOD_PING_MAX_INTERVAL=1.0s` — cap must stay below the election minimum).
 - Default `MOCK_BATTERY_DRAIN_RATE` in `rpi/config.py` is `0.02` %/s so the Phase 2 demo stays stable for presentations; the dashboard exposes an input to bump it for energy-stress demos.
 - Phase 2 logs are at `/tmp/echo-coord-*.log`, `/tmp/echo-leaves.log`, and `/tmp/echo-dashboard.log`; check these first when diagnosing election churn or dashboard issues.
 - Constant leader/coordinator flipping in the Phase 2 demo is almost always ghost processes from a previous run. `bash scripts/demo.sh stop` now `pkill -f`s `rpi.coordinator.echo_node`, `rpi.mock_leaf`, and `rpi.dashboard.app`; verify with `ps` if churn persists after a restart.
